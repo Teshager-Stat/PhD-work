@@ -1,0 +1,337 @@
+---
+title: "Paper2"
+author: "Teshager"
+date: "3/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Paper II: Project 
+
+## Project 2
+
+```{r}
+M_Dat<- read.csv("D:/Thesis final Data/Final edited data final/Teshager monthly malaria final data 2.csv")
+M_Dat$Woreda_Nam<-M_Dat$Woreda
+M_Dat$SMR<-(M_Dat$TM/M_Dat$Population)*10000
+M_Dat$T_cos<-cos((3.14*M_Dat$Time)/6)
+M_Dat$T_sin<-sin((3.14*M_Dat$Time)/6)
+M_Dat$Month_1<-M_Dat$Time
+M_Dat$Month_2<-M_Dat$Time
+M_Dat$Month_3<-M_Dat$Time
+M_Dat$FiD1<-M_Dat$FID+1
+M_Dat$FiD2<-M_Dat$FID+1
+M_Dat$Pop<-log(M_Dat$Population)
+M_Dat$FiD.T<-seq(1:14592)
+head(M_Dat)
+```
+
+
+## Activating the library
+```{r}
+library(foreach)
+library(usethis)
+library(spData)
+library(PROJ)
+library(geos)
+library(sf)
+library(sp)
+library(spdep)
+library(Matrix)
+library(parallel)
+library(tibble)
+library(inlatools)
+library(dplyr)
+library(leaflet)
+library(ggplot2)
+library(INLA)
+library(RgoogleMaps)
+library(bitops)
+library(rjson)
+library(ggmap)
+library(ggsn)
+library(classInt)
+library(viridis)
+library(dplyr)
+library(RColorBrewer)
+library(reshape2)
+library(tidyr)
+library(dplyr)
+library(remotes)
+library(ggregplot)
+```
+
+
+
+### Importing the Shapefile
+```{r}
+library(spData)
+library(sp)
+library(PROJ)
+library(geos)
+library(sf)
+library(spdep)
+shapef <- st_read("D:/Administration/Amhara_woreda_recent_boundary.shp")
+```
+
+
+### Generating spatial weight matrix in R-InLA 
+```{r}
+library(spData) 
+library(spdep)
+temp <- poly2nb(shapef)
+nb2INLA("Amhara.graph", temp)
+Amhara_shape <- paste(getwd(),"/Amhara.graph",sep="")
+Amhara_shape
+```
+
+
+## Main Effects
+```{r}
+Type_I_Main<-TM~T_sin+T_cos+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+NDVI+Relative.humidity 
+Type_I_main<-inla(formula = Type_I_Main, family ="nbinomial",data=M_Dat,offset=Pop,     control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))
+```
+
+
+## Type I interaction: Model specification 
+
+```{r}
+modI<-TM~T_sin+T_cos+Elevatn+Min_temp+Max_temp+Landsurf_temp+Rain_fall+Soil_mois+NDVI+Relative.humidity+LLIN_ATLEASTONE+
+  f(FiD1,model="bym",graph=Amhara_shape,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.001)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+
+```
+
+
+# General poisson regression Models
+```{r}
+ZNB_I<-inla(formula =modI, family ="gpoisson",data=M_Dat,offset=Pop,     control.predictor=list(compute=TRUE),control.compute=list(config=TRUE,cpo=TRUE,dic=TRUE,waic=TRUE))
+```
+
+
+## The AR1 models for the temporal models
+```{r}
+modI_AR<-TM~T_sin+T_cos+Elevatn+Min_temp+Max_temp+Landsurf_temp+Rain_fall+Soil_mois+NDVI+Relative.humidity+LLIN_ATLEASTONE+f(FiD1,model="bym",graph=Amhara_shape,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.001)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="ar1") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+GPOi_I_AR<-inla(formula =modI_AR, family ="gpoisson",data=M_Dat,offset=Pop,     control.predictor=list(compute=TRUE),control.compute=list(config=TRUE,cpo=TRUE,dic=TRUE,waic=TRUE))
+```
+
+
+## default prior
+
+## The AR1 models for the temporal models
+```{r}
+modI_rw1<-TM~T_sin+T_cos+Elevatn+Min_temp+Max_temp+Landsurf_temp+Rain_fall+Soil_mois+NDVI+Relative.humidity+LLIN_ATLEASTONE+f(FiD1,model="bym",graph=Amhara_shape) +
+f(Month_1,model="rw1") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+GPOi_I_rw1<-inla(formula =modI_rw1, family ="gpoisson",data=M_Dat,offset=Pop,     control.predictor=list(compute=TRUE),control.compute=list(config=TRUE,cpo=TRUE,dic=TRUE,waic=TRUE))
+```
+
+
+
+
+# Zoroiflated poisson regression Models
+```{r}
+ZNB_I<-inla(formula =modI, family ="zeroinflatedpoisson0",data=M_Dat,offset=Pop,     control.predictor=list(compute=TRUE),control.compute=list(config=TRUE,cpo=TRUE,dic=TRUE,waic=TRUE))
+```
+
+# Zoroiflated Negative Binomial regression Models
+```{r}
+ZINB_I_ZINB<-inla(formula =modI, family ="zeroinflatednbinomial0",data=M_Dat,offset=Pop,     control.predictor=list(compute=TRUE),control.compute=list(config=TRUE,cpo=TRUE,dic=TRUE,waic=TRUE))
+```
+
+
+```{r}
+
+plot(ZNB_I, plot.fixed.effects=FALSE, plot.lincomb=FALSE, plot.random.effects=FALSE,
+     plot.hyperparameters=FALSE, plot.predictor=FALSE, plot.q=FALSE, plot.cpo=TRUE,
+     single=FALSE)
+```
+
+
+## The final model selected for analysis is generalized poisson model and the analysis is presented 
+using different statistics.
+
+```{r}
+summary(ZNB_I)
+```
+
+
+
+### The spatial random effects and excessive risks
+```{r}
+GP<-ZNB_I$marginals.random[[1]]
+zeta.GP1 <- unlist(lapply(GP,function(x)inla.emarginal(exp,x)))
+#zeta.ST1
+Area_spec<-zeta.GP1[1:152]
+Spa_struc<-zeta.GP1[153:304]
+ID<-seq(1:152)
+Woreda_Nam<-M_Dat$woreda[1:152]
+Teshe_2<-data.frame(ID,Woreda_Nam,Area_spec,Spa_struc)
+Teshe_2$FID<-Teshe_2$ID
+Teshe_2<-as.data.frame(Teshe_2)
+head(Teshe_2)
+write.csv(Teshe_2,file="C:/Users/DTU/Desktop/spatial 2.csv")
+Tem_ID<-seq(1:96)
+GP2<- ZNB_I$marginals.random[[2]]
+TS <- unlist(lapply(GP2,function(x)inla.emarginal(exp,x)))
+GP3<- ZNB_I$marginals.random[[3]]
+TU <- unlist(lapply(GP3,function(x)inla.emarginal(exp,x)))
+Tempo<-data.frame(Tem_ID,TS,TU)
+Tempo<-as.data.frame(Tempo)
+write.csv(Tempo,file="C:/Users/DTU/Desktop/Tempo.csv")
+Tempo
+```
+
+
+
+```{r}
+temporal.rw2 <- lapply(ZNB_I$marginals.random$Month_1,
+function(X){marg <- inla.tmarginal(function(x) exp(x), X)
+inla.emarginal(mean, marg)})
+
+temporal.IID <- lapply(ZNB_I$marginals.random$Month_2,
+function(X){
+marg <- inla.tmarginal(function(x) exp(x), X)
+inla.emarginal(mean, marg)
+})
+
+```
+
+
+#Exporting nonlinear trends of time (structural and unstructral temporal component)
+```{r}
+T1<-as.matrix(temporal.rw2)
+T2<-as.matrix(temporal.IID)
+T<-cbind(T1,T2)
+colnames(T) <- c("Temporal_rw2", "Temporal_IID")
+rownames(T)<-NULL
+T
+write.csv(T,file="C:/Users/DTU/Desktop/temp.csv")
+```
+
+
+Min_temp+Max_temp+Landsurf_temp+Rain_fall+Soil_mois+NDVI+Relative.humidity
+# Computing lagged values of valariables
+```{r}
+M<-M_Dat
+attach(M)
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(MinT1=dplyr::lag(Min_temp,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(MinT2=dplyr::lag(Min_temp,n=2,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(MaxT1=dplyr::lag(Max_temp,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(MaxT2=dplyr::lag(Max_temp,n=2,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(LST1=dplyr::lag(Landsurf_temp,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(LST2=dplyr::lag(Landsurf_temp,n=2,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(RF1=dplyr::lag(Rain_fall,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(RF2=dplyr::lag(Rain_fall,n=2,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(SM1=dplyr::lag(Soil_mois,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(SM2=dplyr::lag(Soil_mois,n=2,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(NDVI1=dplyr::lag(NDVI,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(NDVI2=dplyr::lag(NDVI,n=2,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(RH1=dplyr::lag(Relative.humidity,n=1,default = NA))%>%as.data.frame()
+M<-M %>%
+  group_by(woreda)%>%dplyr::mutate(RH2=dplyr::lag(Relative.humidity,n=2,default = NA))%>%as.data.frame()
+```
+
+
+```{r}
+head(M)
+write.csv(M,"C:/Users/DTU/Downloads/ccc.csv")
+```
+```{r}
+a<-glm(TM~Elevatn+Min_temp+MinT1+MinT2+Max_temp+MaxT1+MaxT2+NDVI1+NDVI2+Relative.humidity+RH1+RH2+Soil_mois+SM1+SM2+Rain_fall+RF1+RF2+Landsurf_temp+LST1+LST2+LLIN_ATLEASTONE,data=M,offset=Pop, family = quasipoisson(link="log"))
+summary(a)
+```
+
+
+```{r}
+m.s<-step(a,trace=0)
+```
+
+
+
+### Exessive Risk and 
+
+```{r}
+a <- 0
+prob.csi <- lapply(GP, function(x) {1 - inla.pmarginal(a, x)})
+prob.ex.risk<-prob.csi[1:152]
+Ex.risk<-as.matrix(prob.ex.risk)
+#colnames(Ex.risk)<-"Excessive_risk"
+#rownames(Ex.risk)<-NULL
+#Ex.risk2<-as.data.frame(Ex.risk)
+
+```
+
+```{r}
+Ex.risk<-as.data.frame(Ex.risk)
+Ex.risk$Woreda_Nam<-M_Dat$woreda[1:152]
+write.csv(Ex.risk,"C:/Users/DTU/Desktop/UncerSR.csv")
+```
+
+### Generating the fixed values
+
+```{r}
+fit<-ZNB_I$summary.fitted.values
+fit$Woreda<-M_Dat$Word_Nm
+fit$wor<-M_Dat$woreda
+fit$period<-M_Dat$Mn_GC_1
+fit$FiD<-M_Dat$FID
+fit$Time<-M_Dat$Time
+head(fit)
+write.csv(fit,"C:/Users/DTU/Desktop/Fitted.csv")
+```
+
+```{r}
+intract<-ZNB_I$marginals.random[[4]]
+zeta.ST1 <- unlist(lapply(intract,function(x)inla.emarginal(exp,x)))
+a <- 0
+PP <- lapply(intract, function(x) {1 - inla.pmarginal(a, x)})
+PP<-as.matrix(PP)
+#colnames(Ex.risk)<-"Excessive_risk"
+#rownames(Ex.risk)<-NULL
+#Ex.risk2<-as.data.frame(Ex.risk)
+PP
+```
+
+```{r}
+PP$Mon<-M_Dat$Mn_GC_1
+PP$year<-M_Dat$year
+write.csv(PP,"C:/Users/DTU/Desktop/PP.csv")
+```
+
+```{r}
+intract<-ZNB_I$marginals.random[[4]]
+Int <- unlist(lapply(intract,function(x)inla.emarginal(exp,x)))
+Int<-as.data.frame(Int)
+head(Int)
+write.csv(Int,"C:/Users/DTU/Desktop/interac.csv")
+```
+
+
+
+
+
+
