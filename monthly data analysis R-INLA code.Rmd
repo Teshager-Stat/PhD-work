@@ -1,0 +1,1174 @@
+---
+title: "Monthly Malaria Data"
+author: "TESHAGER ZERIHUN"
+date: "1/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Importing monthly Data
+
+```{r}
+M_Dat<- read.csv("D:/Thesis final Data/Teshager monthly malaria final data 2.csv")
+M_Dat$Woreda_Nam<-M_Dat$Woreda
+M_Dat$SMR<-(M_Dat$TM/M_Dat$Population)*10000
+M_Dat$T_cos<-cos((3.14*M_Dat$Time)/6)
+M_Dat$T_sin<-sin((3.14*M_Dat$Time)/6)
+head(M_Dat)
+```
+
+
+
+### Importing the shape file
+
+```{r}
+library(spData)
+library(sp)
+library(PROJ)
+library(geos)
+library(sf)
+library(spdep)
+shapef <- st_read("D:/Administration/Amhara_woreda_recent_boundary.shp")
+```
+
+
+
+### Activating INLA library and its dependence 
+```{r}
+library(foreach)
+library(usethis)
+library(spData)
+library(PROJ)
+library(geos)
+library(sp)
+library(spdep)
+library(sf)
+library(Matrix)
+library(parallel)
+library(tibble)
+library(inlatools)
+library(dplyr)
+library(leaflet)
+library(ggplot2)
+library(INLA)
+```
+
+
+
+
+
+#### Importing contiguity matrix from the excel
+```{r}
+library(readxl)
+W_mat<- read.csv("D:/contig.csv")
+colnames(W_mat)<-NULL
+w<-as.matrix(W_mat)
+isSymmetric(w)
+```
+
+
+
+### Generating spatial weight matrix in R-InLA 
+```{r}
+library(spData) 
+library(spdep)
+temp <- poly2nb(shapef)
+nb2INLA("Amhara.graph", temp)
+Amhara_shape <- paste(getwd(),"/Amhara.graph",sep="")
+Amhara_shape
+```
+
+
+
+
+```{r}
+ H <- inla.read.graph(filename="Amhara.graph")
+ image(inla.graph2matrix(H),xlab="",ylab="")
+```
+
+
+# Spatiotemporal models and data handling
+
+```{r}
+M_Dat$Month_1<-M_Dat$Time
+M_Dat$Month_2<-M_Dat$Time
+M_Dat$FiD1<-M_Dat$FID+1
+M_Dat$FiD2<-M_Dat$FID+1
+M_Dat$Pop<-log(M_Dat$Population)
+M_Dat$FiD.T<-seq(1:14592)
+head(M_Dat)
+```
+
+### Parametric trends
+
+# Model with and without covariates
+> formula.par<- y ̃ 1 + f(county, model="bym",graph=Ohio.adj,
+constr=TRUE),
++ f(county1, year, model="iid", constr=TRUE),
++ year
+> model.par <- inla(formula.par,family="poisson",data=data,E=E,
+control.predictor=list(compute=TRUE),
+control.compute=list(dic=TRUE,cpo=TRUE))
+
+
+```{r}
+Ber<- TM~ 1+ f(FiD1,model="bym",graph=Amhara_shape,constr = TRUE) +f(FiD2,Month_1,model="iid")+Month_1
+
+```
+
+```{r}
+model.par <- inla(Ber,family="poisson",data=M_Dat,offset = Pop,
+control.predictor=list(compute=TRUE),
+control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+```
+
+
+
+# Negative binomial distributions  
+
+```{r}
+Ber2<- TM~ 1+ f(FiD1,model="bym",graph=Amhara_shape,constr = TRUE) +f(FiD2,Month_1,model="iid")+Month_1
+model.par2 <- inla(Ber2,family="nbinomial",data=M_Dat,offset = Pop,
+control.predictor=list(compute=TRUE),
+control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+```
+
+
+
+# Zero-inflated negative binomial distributions distributions  
+
+```{r}
+Ber3<- TM~ 1+ f(FiD1,model="bym",graph=Amhara_shape,constr= TRUE) +f(FiD2,Month_1,model="iid")+Month_1
+model.par3<- inla(Ber3,family="zeroinflatednbinomial0",data=M_Dat,offset = Pop,
+control.predictor=list(compute=TRUE),
+control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+```
+
+
+
+```{r}
+round(model.par2$summary.fixed,3)
+```
+
+
+
+```{r}
+model.par2$marginals.fixed
+```
+
+## Plottting the Bt vs t with thier confidence interval
+```{r}
+GLT<-read.csv(file.choose(),header=TRUE)
+
+```
+
+## PPLOTTING GLOBAL LINEAR TREND WITH 95% CI
+
+```{r}
+m = lm(X.t~t,data=GLT)
+newx = seq(min(t),max(t),by = 1)
+conf_interval <- predict(m, newdata=data.frame(x=newx),interval="confidence",level = 0.95)
+plot(t, X.t, xlab="t", ylab="Bt")
+abline(m, col="red")
+lines(newx, conf_interval[,2], col="blue", lty=2)
+lines(newx, conf_interval[,3], col="blue", lty=2)
+
+```
+
+
+
+
+```{r}
+#Fixed effects
+data.inla <- inla(y~x,data=data,control.compute=list(dic=TRUE, cpo=TRUE, waic=TRUE),control.fixed=list(mean=0, prec=0.0196, mean.intercept=0, prec.intercept=0.001),                  control.family=list(hyper=list(prec=list(prior='loggamma', param=c(0.1,0.1)))))
+summary(data.inla)
+plot(data.inla, plot.fixed.effects = TRUE, plot.lincomb = FALSE, plot.random.effects = FALSE, plot.hyperparameters = FALSE,
+    plot.predictor = FALSE, plot.q = FALSE, plot.cpo = FALSE, single = FALSE)
+data.inla$summary.fixed
+#We can also get the densities for selected values along the marginal #distribution for each fixed effect.
+data.inla$marginals.fixed
+#In case we wanted to plot these via ggplot...
+library(dplyr)
+data.inla.fixed <- reshape2:::melt(data.inla$marginals.fixed) %>%
+                   reshape2:::dcast(L1+Var1~Var2, value='value')
+ggplot(data.inla.fixed, aes(y=y, x=x)) + geom_line() +
+      facet_wrap(~L1, scales='free', nrow=1) + theme_classic()
+#Predictor
+plot(data.inla, plot.fixed.effects=FALSE, plot.lincomb=FALSE, plot.random.effects=FALSE,
+     plot.hyperparameters=FALSE, plot.predictor=TRUE, plot.q=FALSE, plot.cpo=FALSE,
+     single=FALSE)
+data.inla$summary.linear.predictor
+
+# Fitted value
+
+```
+
+
+
+## Global linear time trend of beta's
+
+```{r}
+library(dplyr)
+library(ggplot2)
+data.inla.fixed <- reshape2:::melt(model.par2$marginals.fixed) %>%
+                   reshape2:::dcast(L1+Var1~Var2, value='value')
+ggplot(data.inla.fixed, aes(y=y, x=x)) + geom_line() +
+      facet_wrap(~L1, scales='free', nrow=1) + theme_classic()
+```
+
+
+
+
+```{r}
+summary(model.par2)
+```
+
+
+### The spatial random effects and excessive risks
+
+```{r}
+m<-model.par2$marginals.random[[1]]
+zeta.ST1 <- unlist(lapply(m,function(x)inla.emarginal(exp,x)))
+#zeta.ST1
+unst.spat<-zeta.ST1[1:152]
+struc.spat<-zeta.ST1[153:304]
+F_ID<-seq(1:152)
+m2<- model.par2$marginals.random[[2]]
+differential <- unlist(lapply(m2,function(x)inla.emarginal(exp,x)))
+Teshe<-data.frame(F_ID,unst.spat,struc.spat,differential)
+Teshe$FID<-Teshe$F_ID
+Teshe<-as.data.frame(Teshe)
+head(Teshe)
+write.csv(Teshe,file="C:/Users/DTU/Desktop/Spatial_trend.csv")
+```
+
+
+
+### Excessive risks 
+```{r}
+a <- 0
+prob.csi <- lapply(m, function(x) {1 - inla.pmarginal(a, x)})
+prob.ex.risk<-prob.csi[1:152]
+Ex.risk<-as.matrix(prob.ex.risk)
+#colnames(Ex.risk)<-"Excessive_risk"
+#rownames(Ex.risk)<-NULL
+#Ex.risk2<-as.data.frame(Ex.risk)
+Ex.risk
+```
+
+
+
+
+### importing excessive risk 
+
+```{r}
+excessive_risk<-read.csv("C:/Users/DTU/Desktop/bemb.csv",header = TRUE)
+head(excessive_risk)
+```
+
+
+row.names(prob.csi)<-NULL
+as.vector(prob.csi)
+#col(prob.csi)<-c("prob.excess.risk")
+prob.csi
+write.csv("")
+
+
+### Finally, it could be interesting to evaluate the proportion of variance explained by the structured spatial component.
+
+```{r}
+mat.marg <- matrix(NA, nrow=152, ncol=100000)
+m <- model.par2$marginals.random$FiD1
+ for (i in 1:152){
+#Remember that the first 152 values of the random effects
+#are u+v, while u values are stored in the (152+1) to #(2*152) elements.
+         u <- m[[152+i]]
+mat.marg[i,] <- inla.rmarginal(100000, u)
+}
+var.u <- apply(mat.marg, 2, var)
+```
+
+### Unstructured spatial component 
+```{r}
+var.v <- inla.rmarginal(100000,inla.tmarginal(function(x) 1/x,
+model.par2$marginals.hyper$`Precision for FiD1 (iid component)`))
+```
+
+
+
+
+# Finally the spatial fractions is 
+```{r}
+ perc.var.u <- mean(var.u/(var.u+var.v))
+ perc.var.u
+
+ marg.hyper <- inla.hyperpar.sample(100000,model.par)
+#Then we can obtain the posterior distribution of the proportion of variance
+#explained by the spatial component as follows:
+perc.var.u1 <- mean(marg.hyper[,1] / (marg.hyper[,1]+marg.hyper[,2]))
+perc.var.u1
+```
+
+
+
+```{r}
+#Define the cutoff for zeta
+zeta.cutoff <- c(0.0001, 0.08,0.25,0.689,0.923, 1.253, 2.63,3, 10,50)
+#Transform zeta in categorical variable
+cat.zeta <- cut(unlist(Teshe$struc.spat),breaks=zeta.cutoff,include.lowest=TRUE)
+#Create a dataframe with all the information needed for the map
+ maps.cat.zeta <- data.frame(Teshe,cat.zeta=cat.zeta)
+ maps.cat.zeta
+```
+
+
+```{r}
+library(sf)
+library(sp)
+library(geos)
+library(PROJ)
+ #Add the categorized zeta to the spatial polygon
+shapef$FID<-seq(1:152)
+am_sp_merged <- merge(shapef,maps.cat.zeta,by.x="FID",by.y="F_ID")
+am_sp_merged$Spatial_main<-am_sp_merged$cat.zeta
+head(am_sp_merged)
+ #Map zeta
+## spplot work with sp objects not on sf spatial objects 
+#spplot(obj=am_sp_merged, zcol= "cat.zeta",col.regions=gray(seq(0.0001,50,length=9)), asp=1)
+```
+
+
+```{r}
+plot(am_sp_merged$differential,xlab="ID of districts", ylab="Differentian effects", 
+     main="scatter plot of differential effects of malaria prevalence")
+library(RColorBrewer)
+#pal<-brewer.pal(7,"OrRd")
+plot(am_sp_merged["differential"], breaks="quantile", main="dd")
+```
+```{r}
+ggplot(am_sp_merged) + 
+  geom_sf(aes(fill=differential))
+```
+
+
+
+
+## Plotting posterior mean of spatial main effects 
+
+```{r}
+library(RgoogleMaps)
+library(bitops)
+library(rjson)
+library(ggmap)
+library(ggsn)
+(ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=Spatial_main)) +
+    scale_fill_brewer(palette = "OrRd")+blank()+north(am_sp_merged,symbol=16,scale = 0.15)+scalebar(am_sp_merged,dist=65,dist_unit="km",location="bottomleft",transform=FALSE, model = "WGS84",st.size =3,st.dist = 0.02))
+
+#theme_bw()
+```
+
+
+
+### Differential trend plot with northing direction and scalebars 
+
+
+```{r}
+library(classInt)
+# Get quantile breaks. Add .00001 offset to catch the lowest value
+breaks_qt1 <- classIntervals(c(min(am_sp_merged$differential)- .00001, am_sp_merged$differential), n = 7, style = "quantile")
+
+am_sp_merged <- mutate(am_sp_merged, Differential_trend = cut(differential, breaks_qt1$brks)) 
+
+ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=Differential_trend)) +
+    scale_fill_brewer(palette = "YlOrRd")+blank()+north(am_sp_merged,symbol=16,scale = 0.18)+
+    scalebar(am_sp_merged, location = "bottomleft",dist =65, dist_unit = "km",
+             transform = FALSE, model = "WGS84",st.size =3,st.dist = 0.02)
+```
+
+
+### Spatial main effect using categories created by ClassInterval break function
+```{r}
+library(RgoogleMaps)
+library(bitops)
+library(rjson)
+library(ggmap)
+library(ggsn)
+library(classInt)
+# Get quantile breaks. Add .00001 offset to catch the lowest value
+breaks_qt1 <- classIntervals(c(min(am_sp_merged$struc.spat)- .00001, am_sp_merged$struc.spat), n = 9, style = "quantile")
+am_sp_merged <- mutate(am_sp_merged, spatial_effect = cut(struc.spat, breaks_qt1$brks)) 
+
+ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=spatial_effect)) + blank()+ scalebar(am_sp_merged,dist=65,dist_unit="km",location = "bottomleft",transform=FALSE,model="WGS84",st.size =3,st.dist = 0.02)+blank()+north(am_sp_merged,symbol = 16,scale = 0.18)+scale_fill_brewer(palette = "YlOrRd") 
+```
+
+
+
+
+
+# Plotting using ggplot2 packages
+
+```{r}
+library(sf)
+library(ggplot2)
+library(viridis)
+ggplot(data = am_sp_merged, aes(fill =differential)) + geom_sf() +
+  scale_fill_viridis() + theme_bw()
+```
+
+
+
+
+```{r}
+ggplot(data = am_sp_merged, aes(fill=unst.spat)) + geom_sf() +
+  scale_fill_viridis() + theme_bw()
+```
+
+
+```{r}
+
+ggplot(data = am_sp_merged, aes(fill =struc.spat)) + geom_sf() +
+  scale_fill_viridis() + theme_bw()
+```
+
+
+
+
+```{r}
+ggplot(am_sp_merged) + 
+  geom_sf(aes(fill=unst.spat))
+
+```
+
+### adding categorical levels on the colorpleth maps
+
+```{r}
+library(classInt)
+# get quantile breaks. Add .00001 offset to catch the lowest value
+breaks_qt_uspa <- classIntervals(c(min(am_sp_merged$unst.spat) - .00001, am_sp_merged$unst.spat), n = 7, style = "quantile")
+
+breaks_qt_diff <- classIntervals(c(min(am_sp_merged$differential) - .00001, am_sp_merged$differential), n = 7, style = "quantile")
+breaks_qt_struc_spat <- classIntervals(c(min(am_sp_merged$struc.spat) - .00001, am_sp_merged$struc.spat), n = 7, style = "quantile")
+breaks_qt_uspa
+breaks_qt_diff
+breaks_qt_struc_spat
+```
+
+
+# We can also use personal defined intervals such as
+
+```{r}
+#Define the cutoff for zeta
+zeta.cutoff <- c(0.0001, 0.08,0.25,0.689,0.923, 1.253, 2.63,3, 10,50)
+#Transform zeta in categorical variable
+cat.zeta <- cut(unlist(Teshe$unst.spat),breaks=zeta.cutoff,include.lowest=TRUE)
+```
+
+
+## Mutate the created interval of values on the spatial polygone
+```{r}
+library(sp)
+library(leaflet)
+library(spData)
+library(spdep)
+library(dplyr)
+library(RColorBrewer)
+library(viridis)
+am_sp_merged <- mutate(am_sp_merged, unst_spat_cat = cut(unst.spat, breaks_qt_uspa$brks),diff_cat=cut(differential,breaks_qt_diff$brks),stru_spa_cat=cut(struc.spat,breaks_qt_struc_spat$brks)) 
+names(am_sp_merged)
+```
+
+
+```{r}
+ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=unst_spat_cat)) +
+    scale_fill_brewer(palette = "YlOrRd") 
+```
+
+
+```{r}
+library(ggsci)
+ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=diff_cat)) +
+   scale_fill_brewer(palette = "YlOrRd") 
+      #  scale_fill_lancet()
+#scale_fill_npg()
+        #scale_fill_aaas()
+      #  scale_fill_jco()
+#scale_fill_tron()
+#scale_fill_viridis(discrete = TRUE)
+```
+
+
+```{r}
+ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=stru_spa_cat)) +
+    scale_fill_brewer(palette = "YlOrRd") 
+```
+
+# display all scale color brewer
+```{r}
+display.brewer.all(colorblindFriendly = TRUE)
+```
+
+
+
+
+## Spatial and differential trends interactive maps
+
+
+```{r}
+epsg3006 <- leafletCRS(crsClass = "L.Proj.CRS", code = "EPSG:3006",
+  proj4def = "+proj=utm +zone=33 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
+  resolutions = 2^(13:-1), # 8192 down to 0.5
+  origin = c(0, 0)
+)
+leaflet(options = leafletOptions(crs = epsg3006)) %>% 
+  addTiles() %>% 
+  addPolygons(data = am_sp_merged,
+              color = 'white',
+              weight = 1.5,
+              opacity = 1,
+              fillColor = 'black',
+              fillOpacity = .8,
+              highlightOptions = highlightOptions(color = "#FFF1BE", 
+                                                  weight = 5),
+              popup = ~unst.spat)
+```
+
+
+
+# Exporting or writing data to csv format 
+
+```{r}
+write.csv(Teshe,file = "C:/Users/DTU/Desktop/Teshe.csv")
+```
+
+To compute the posterior mean and 95% credibility interval for the fixed effect
+b0 on the original scale, we type
+> exp.b0.mean <- inla.emarginal(exp,mod.suicides$marginals.fixed[[1]])
+
+> exp.b0.95CI <- inla.qmarginal(c(0.025,0.975),
+inla.tmarginal(exp,mod.suicides$marginals.fixed[[1]]))
+
+```{r}
+exp.b0 <- inla.emarginal(exp,model.par2$marginals.fixed[[1]])
+exp.b0.95CI <- inla.qmarginal(c(0.025,0.975),
+inla.tmarginal(exp,model.par2$marginals.fixed[[1]]))
+exp.b0
+exp.b0.95CI
+```
+```{r}
+exp.month <- round(inla.emarginal(exp,model.par2$marginals.fixed[[2]]),3)
+exp.month.95CI <-round(inla.qmarginal(c(0.025,0.975),
+inla.tmarginal(exp,model.par2$marginals.fixed[[2]])),3)
+exp.month
+exp.month.95CI
+```
+
+
+The computation of the posterior mean for the random effects � is performed in two steps as we have more than one parameter:
+
+```{r}
+csi <- model.par2$marginals.random$FiD1[1:152]
+zeta <- lapply(csi,function(x) inla.emarginal(exp,x))
+zeta
+```
+
+# Differential time effect
+
+```{r}
+m2<- model.par2$marginals.random[[2]]
+zeta.ST2 <- unlist(lapply(m2,function(x)inla.emarginal(exp,x)))
+zeta.ST2
+```
+
+# Linear time trends
+
+```{r}
+ b0 <- inla.rmarginal(1000,
+marg = model.par2$marginals.fixed$Month_1)
+
+```
+
+
+
+
+## Spatial autocorrelations 
+
+1. Read the sp object or shapefile eg: am_sp_merged
+2. library(spdep)
+3.defining neignbors 
+nb<-poly2nb(am_sp_merged,queen=TRUE)
+4. assigning weight for each polygon and assigned equal weight for neighborhood areas
+lw<-nb2listw(bn,style="W", zero.policy=TRUE)
+
+
+```{r}
+library(spdep)
+nb<-poly2nb(am_sp_merged,queen=TRUE)
+lw<-nb2listw(nb,style="W", zero.policy=TRUE)
+moran.test(am_sp_merged$struc.spat,lw)
+## The p-value generated using moran.test is not computed from MC simulations but analytically obtained. This may not always prove to be the most accurate measure of significance. To test for significance using the MC simulation method instead, use the moran.mc function. 
+MC<- moran.mc(am_sp_merged$struc.spat, lw, nsim=10000)
+MC
+# Plot the distribution (note that this is a density plot instead of a histogram)
+plot(MC, main="", las=1)
+```
+
+
+
+
+
+
+
+
+### Non-parametric dynamic trends 
+
+In the model specified above, a linearity constraint is imposed on the differential temporal trend �i; nevertheless it is possible to release it using a dynamic non-parametric formulation for the linear predictor (Knorr-Held, 2000) as
+
+
+```{r}
+N_par <- TM~f(FiD1,model="bym",graph=Amhara_shape) +
+f(Month_1,model="rw2")+f(Month_2,model="iid")
+lcs <- inla.make.lincombs(Month_1 = diag(96),Month_2=diag(96))
+```
+
+
+
+```{r}
+model.NPA <- inla(formula=N_par,family="poisson",data=M_Dat,offset = Pop,
+control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE),lincomb=lcs)
+```
+
+
+
+
+```{r}
+N_par2 <- TM~f(FiD1,model="bym",graph=Amhara_shape) +
+f(Month_1,model="rw2")+f(Month_2,model="iid")
+lcs <- inla.make.lincombs(Month_1 = diag(96),Month_2=diag(96))
+```
+
+
+```{r}
+model.NPA2 <- inla(formula=N_par2,family="nbinomial",data=M_Dat,offset = Pop,
+control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE),lincomb=lcs)
+```
+
+
+
+
+### Note that there are two parameters for the temporal trend (�t and �t) which we report on the natural scale using the code below and plot in Figure 7.3:
+
+
+```{r}
+temporal.CAR <- lapply(model.NPA2$marginals.random$Month_1,
+function(X){marg <- inla.tmarginal(function(x) exp(x), X)
+inla.emarginal(mean, marg)})
+
+temporal.IID <- lapply(model.NPA2$marginals.random$Month_2,
+function(X){
+marg <- inla.tmarginal(function(x) exp(x), X)
+inla.emarginal(mean, marg)
+})
+```
+
+
+
+```{r}
+n<-model.NPA2$marginals.random[[1]]
+bem <- unlist(lapply(n,function(x)inla.emarginal(exp,x)))
+#zeta.ST1
+spatial_unst<-bem[1:152]
+spatial_struc<-bem[153:304]
+F_ID<-seq(1:152)
+Teshe2<-data.frame(F_ID,spatial_unst,spatial_struc)
+Teshe2$FID<-Teshe2$F_ID
+Teshe2<-as.data.frame(Teshe2)
+head(Teshe2)
+write.csv(Teshe2,file="C:/Users/DTU/Desktop/nonpAR_Spatial_dynamics.csv")
+```
+
+
+```{r}
+library(RgoogleMaps)
+library(bitops)
+library(rjson)
+library(ggmap)
+library(ggsn)
+library(classInt)
+shapef$FID<-seq(1:152)
+merged<-mutate(am_sp_merged,Teshe2, by.x=FID, by.y=FID)
+# Get quantile breaks. Add .00001 offset to catch the lowest value
+breaks_qt3 <- classIntervals(c(min(merged$spatial_struc)- .00001, merged$spatial_struc), n = 7, style = "quantile")
+breaks_qt4 <- classIntervals(c(min(merged$spatial_unst)- .00001, merged$spatial_unst), n = 7, style = "quantile")
+
+
+merged <- mutate(merged, spat_struc= cut(spatial_struc, breaks_qt3$brks),spat_unst=cut(spatial_unst,breaks_qt4$brks)) 
+
+ggplot(merged) + 
+    geom_sf(aes(fill=spat_struc)) +
+    scale_fill_brewer(palette = "YlOrRd")+blank()+north(merged,symbol=16,scale = 0.18)+
+    scalebar(merged, location = "bottomleft",dist =65, dist_unit = "km",
+             transform = FALSE, model = "WGS84",st.size =3,st.dist = 0.02)
+
+ggplot(merged) + 
+    geom_sf(aes(fill=spat_unst)) +
+    scale_fill_brewer(palette = "YlOrRd")+blank()+north(merged,symbol=16,scale = 0.18)+
+    scalebar(merged, location = "bottomleft",dist =65, dist_unit = "km",
+             transform = FALSE, model = "WGS84",st.size =3,st.dist = 0.02)
+```
+
+
+# Percents of variations explained by using structured spatial effects
+
+### Finally, it could be interesting to evaluate the proportion of variance explained by the structured spatial component.
+
+```{r}
+mat.marg1<- matrix(NA, nrow=152, ncol=100000)
+m11 <- model.NPA2$marginals.random$FiD1
+ for (i in 1:152){
+#Remember that the first 152 values of the random effects
+#are u+v, while u values are stored in the (152+1) to #(2*152) elements.
+         u1 <- m11[[152+i]]
+mat.marg1[i,] <- inla.rmarginal(100000, u1)
+}
+var.u1 <- apply(mat.marg1, 2, var)
+```
+
+### Unstructured spatial component 
+```{r}
+var.v2 <- inla.rmarginal(100000,inla.tmarginal(function(x) 1/x,
+model.NPA2$marginals.hyper$`Precision for FiD1 (iid component)`))
+```
+
+
+
+
+# Finally the spatial fractions is 
+```{r}
+ perc.var.u1 <- mean(var.u1/(var.u1+var.v2))
+ perc.var.u1
+
+ marg.hyper <- inla.hyperpar.sample(100000,model.NPA2)
+#Then we can obtain the posterior distribution of the proportion of variance
+#explained by the spatial component as follows:
+perc.var.u2 <- mean(marg.hyper[,1] / (marg.hyper[,1]+marg.hyper[,2]))
+perc.var.u2
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Type I intercations random effect
+
+```{r}
+Non_par_typeI_I<-TM~+f(FiD1,model="bym",graph=Amhara)+
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+#lcs_2 <- inla.make.lincombs(Month_1 = diag(96),Month_2=diag(96))
+model.NPA_typeI_I <- inla(formula=Non_par_typeI,family="nbinomial",data=M_Dat,offset = Pop,
+control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))#,lincomb=lcs_2)
+```
+
+
+
+
+
+#Exporting nonlinear trends of time (structural and unstructral temporal component)
+```{r}
+tt<-as.matrix(temporal.CAR)
+tt1<-as.matrix(temporal.IID)
+t<-cbind(tt,tt1)
+colnames(t) <- c("Temporal_CAR", "Temporal_IID")
+rownames(t)<-NULL
+T<-as.data.frame(t)
+write.csv(t,file="C:/Users/DTU/Desktop/npar_temporal.csv")
+```
+
+
+### Excessive risks 
+```{r}
+a <- 0
+prob.csi <- lapply(m, function(x) {1 - inla.pmarginal(a, x)})
+prob.ex.risk<-prob.csi[1:152]
+Ex.risk<-as.matrix(prob.ex.risk)
+#colnames(Ex.risk)<-"Excessive_risk"
+#rownames(Ex.risk)<-NULL
+#Ex.risk2<-as.data.frame(Ex.risk)
+Ex.risk
+
+```
+
+
+
+```{r}
+m2<- model.par2$marginals.random[[2]]
+b<-0
+prob.csi2 <- lapply(m2, function(x) {1 - inla.pmarginal(b, x)})
+prob.ex.risk2<-prob.csi2[1:152]
+Ex.risk2<-as.matrix(prob.ex.risk2)
+#colnames(Ex.risk)<-"Excessive_risk"
+#rownames(Ex.risk)<-NULL
+#Ex.risk2<-as.data.frame(Ex.risk)
+write.csv(Ex.risk2,file="C:/Users/DTU/Desktop/posterior_prob.csv")
+```
+
+### importing excessive risk for differential trends
+
+```{r}
+excessive_risk2<-read.csv("C:/Users/DTU/Desktop/posterior_prob.csv",header = TRUE)
+head(excessive_risk2)
+```
+### Merging data into different classes
+```{r}
+#Define the cutoff for zeta
+zeta.cutoff1 <- c(0,0.1,0.25,0.75,0.9,1)
+#Transform zeta in categorical variable
+cat.zeta2 <- cut(unlist(excessive_risk2$Posterior.probability),breaks=zeta.cutoff1,include.lowest=TRUE)
+Eyu<-data.frame(excessive_risk2,cat.zeta2)
+head(Eyu)
+
+```
+
+
+```{r}
+
+am_sp_merged <- merge(am_sp_merged,Eyu,by.x="FID",by.y="FID")
+am_sp_merged$posterior_probability<-am_sp_merged$cat.zeta2
+head(am_sp_merged)
+```
+
+```{r}
+ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=posterior_probability)) +
+    scale_fill_brewer(palette = "YlOrRd")+blank()+north(am_sp_merged,symbol=16,scale = 0.18)+scalebar(am_sp_merged, location = "bottomleft",dist =65, dist_unit = "km",
+             transform = FALSE, model = "WGS84",st.size =3,st.dist = 0.02)
+```
+
+```{r}
+p<-ggplot(am_sp_merged) + 
+    geom_sf(aes(fill=posterior_probability)) +
+    scale_fill_brewer(palette = "YlOrRd")+blank()+north(am_sp_merged,symbol=16,scale = 0.18)+scalebar(am_sp_merged, location = "bottomleft",dist =65, dist_unit = "km",
+             transform = FALSE, model = "WGS84",st.size =3,st.dist = 0.02)
+p+geom_sf_text(aes(label=Woreda_Nam),nudge_x = 0.01,nudge_y = 0.01,inherit.aes = FALSE)
+```
+
+
+## Writing or exporting shapefiles 
+```{r}
+setwd("D:/Administration")
+library(rgdal)
+st_write(am_sp_merged,dsn = "eyu22.shp",layer = "am_sp_merged.shp",driver = "ESRI Shapefile")
+```
+
+
+
+
+
+# Importing data on the non-prametric dynamic trends
+```{r}
+library(readxl)
+nlinear_ST <- read_excel("C:/Users/DTU/Desktop/nlinear ST.xlsx")
+Mon_year<-paste(substr(nlinear_ST$Month, start=1, stop=3),",",nlinear_ST$Year)
+date<-seq(as.Date("2012/7/1"), by = "month", length.out = 96)
+nlinear_ST<-mutate(nlinear_ST,Mon_year,date)
+head(nlinear_ST)
+```
+
+## Ploting using ggplot or time series plot 
+
+```{r}
+attach(nlinear_ST)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+library(dplyr)
+
+ggplot(nlinear_ST,aes(x=date,y=Temporal.CAR)) + geom_line(color="blue")+geom_line(aes(date,Temporal_IID),color="red")
+
+df <- nlinear_ST%>%
+  select(date,Temporal_IID, Temporal.CAR) %>%
+  gather(key = "variable", value = "value", -date)
+head(df, 3)
+min <- as.Date("2012-7-1")
+max <-as.Date("2020-06-01")
+# Multiple line plot
+ggplot(df, aes(x = date, y = value)) + 
+  geom_line(aes(color = variable), size = 1) +
+  scale_color_manual(values = c("#00AFBB", "#E7B800")) +scale_x_date(limits = c(min, max))+
+  theme_minimal()+scale_x_date(date_labels = "%b/%Y")
+```
+
+## Interactive maps for differential trends
+
+
+
+
+
+
+
+### Models: Type I interactions
+
+### Spatio-temporal interactions--Poisson- Formula--- Type I interactions
+
+```{r}
+Type_I<-TM~T_sin+T_cos+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+Specific_humd+NDVI +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+```
+
+
+```{r}
+Type_I_Int_poi<-TM~1 +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+set.seed(123456)
+Type_I_mod_Int_poi<-inla(formula = Type_I_Int,family = "poisson",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))
+```
+
+
+#### Spatio-Temporal model
+```{r}
+set.seed(123456)
+Type_I_mod<-inla(formula = Type_I,family = "poisson",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))
+```
+
+
+
+
+
+
+### Models: Type I interactions... Negative Binomial
+### Spatio-temporal interactions--Poisson- Formula--- Type I interactions
+
+```{r}
+Type_I_NB<-TM~T_cos+T_sin+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+Specific_humd+NDVI +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+```
+
+
+```{r}
+Type_II_NB<-TM~T_cos+T_sin+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+NDVI +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") +
+f(FiD.T,model="iid")
+set.seed(123456)
+Type_III_mod_NB<-inla(formula = Type_II_NB,family = "nbinomial",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+```
+
+
+#### Spatio-Temporal model
+```{r}
+set.seed(123456)
+Type_II_mod_NB<-inla(formula = Type_I_NB,family = "nbinomial",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE))
+```
+
+
+
+```{r}
+M_Dat$Month_3<-M_Dat$Time
+Type_II<-TM~T_cos+T_sin+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+Specific_humd+NDVI +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") + f(FiD2,model="iid",group=Month_3,control.group=list(model="rw2"))
+```
+
+
+```{r}
+M_Dat$Month_3<-M_Dat$Time
+Type_II<-TM~f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") + f(FiD2,model="iid",group=Month_3,control.group=list(model="rw2"))
+```
+
+
+
+```{r}
+set.seed(123456)
+Type_II_mod<-inla(formula = Type_II,family = "nbinomial",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))
+```
+
+
+
+
+
+### Models: Type III interactions
+
+```{r}
+M_Dat$Month_3<-M_Dat$Time
+Type_III<-TM~T_cos+T_sin+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+Specific_humd+NDVI +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") + f(Month_3,model="iid",group=FiD2,control.group=list(model="besag",graph=Amhara))
+```
+
+
+
+```{r}
+set.seed(123456)
+Type_III_mod<-inla(formula = Type_III,family = "poisson",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))
+```
+
+
+### Models: Type IV interactions
+
+```{r}
+M_Dat$Month_3<-M_Dat$Time
+Type_IV<-TM~T_cos+T_sin+Elevatn+Max_temp+Min_temp+Landsurf_temp+Soil_mois+Rain_fall+Specific_humd+NDVI +f(FiD1,model="bym",graph=Amhara,hyper = list(prec.unstruct=list(prior="loggamma",param=c(1,0.01)),prec.spatial=list(prior="loggamma",param=c(1,0.001)))) +
+f(Month_1,model="rw2") +
+f(Month_2,model="iid") + f(FiD2,model="besag",graph=Amhara,group=Month_3,control.group=list(model="rw2"))
+```
+
+
+
+```{r}
+set.seed(123456)
+Type_IV_mod<-inla(formula = Type_IV,family = "poisson",data=M_Dat,offset=Pop,control.predictor=list(compute=TRUE),control.compute=list(dic=TRUE,waic=TRUE))
+```
+
+
+############### Mapping###########
+
+```{r}
+library(ggplot2)
+ggplot(data = M_Dat, mapping = aes(x= M_Dat$Mnth_GC, y = M_Dat$TM)) + 
+  geom_point(mapping = aes(color =M_Dat$year)) + 
+  geom_smooth()
+```
+
+
+```{r}
+library(dplyr)
+yearly_counts_graph <- M_Dat %>%
+    count(Mnth_GC, Year_1) %>% 
+    ggplot(mapping = aes(x=Mnth_GC, y = n, color = Year_1)) +
+    geom_line()
+
+yearly_counts_graph
+```
+
+
+
+### Installing inlatools
+```{r}
+ip <- rownames(installed.packages())
+if (!"remotes" %in% ip) {
+  install.packages("remotes")
+}
+if (!"INLA" %in% ip) {
+  install.packages(
+    "INLA", 
+    repos = c(getOption("repos"), "https://inla.r-inla-download.org/R/stable")
+  )
+}
+remotes::install_github("inbo/inlatools")
+```
+
+## Activating some library for checking dispersion parameters in inlatools
+```{r}
+library(tibble)
+library(dplyr)
+library(ggplot2)
+library(inlatools)
+```
+
+## testing dispersion parameters in the parametric spatio-temporal linear trend models
+
+# poisson models
+
+```{r}
+mod.par.dis<-dispersion_check(model.par)
+```
+
+```{r}
+plot(mod.par.dis)
+```
+
+
+## negative binomial models
+
+```{r}
+mod.par.dis2<-dispersion_check(model.par2)
+```
+
+
+```{r}
+glimpse(mod.par.dis2)
+plot(mod.par.dis2)
+```
+
+
+## zeroinflated negative binomial model 
+
+```{r}
+
+```
+
+#### nonparametric dynamic models
+### Poisson models
+
+```{r}
+model.npa.poison<-dispersion_check(model.NPA)
+```
+
+```{r}
+plot(model.npa.poison)
+```
+
+### negative binomial models
+
+```{r}
+model.npa.nbinom<-dispersion_check(model.NPA2)
+```
+
+
+```{r}
+glimpse(model.npa.nbinom)
+par(mfrow=c(1,2))
+plot(mod.par.dis2,title(main="dispersion for parametric Nbinomial"))
+plot(model.npa.nbinom,title(main = "dispersion for nonparametric NB"))
+
+```
+
+```{r}
+install.packages("remotes") 
+remotes::install_github("gfalbery/ggregplot")
+```
+
+```{r}
+library(remotes)
+library(ggregplot)
+Efxplot(list(model.par,model.par2))
+Efxplot(list(model.NPA,model.NPA2))
+```
+### distribution checking
+
+
+```{r}
+mod11<-fast_distribution_check(model.par)
+```
+
