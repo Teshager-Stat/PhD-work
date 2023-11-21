@@ -1,0 +1,277 @@
+---
+title: "Untitled"
+author: "Teshager"
+date: "December 10, 2020"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown)
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Activating libraries
+
+```{r}
+library(MASS)
+library(stats)
+library(base)
+library(Rcpp)
+library(usethis)
+library(dplyr)
+library(ggplot2)
+library(gstat)
+library(maps)
+library(sp)
+library(geos)
+library(rgdal)
+library(PROJ)
+library(sf)
+library("CARBayesST")
+library(Matrix)
+library(readxl)
+library(parallel)
+library(dplyr)
+library(spData)
+library(spdep)
+library(foreach)
+library(rgdal)
+library(GGally)
+library("INLA")
+```
+
+
+# Impotring data into R
+
+```{r}
+library(DT)
+Dat_week<- read_xlsx("C:/Users/Amin/Desktop/Data_T/Teshager weekly final data 2.xlsx")
+Dat_week<-Dat_week %>% mutate(MPR=(Dat_week$TM/Dat_week$Population)*10000, Tcos=cos(3.14*Dat_week$T/6),Tsin=sin(3.14*Dat_week$T/6))
+Dat_week$Woreda_Nam<-Dat_week$Woreda
+Dat_week$Lands_temp<-Dat_week$Land_Surface_temp-273.15
+head(Dat_week)
+
+```
+
+
+
+
+
+# Importing the shapefiles of Amhara regions
+
+```{r}
+library(sf)
+s<-read_sf("C:/Users/Amin/Desktop/Data_T/Administration/Amhara_woreda_recent_boundary.shp")
+sh_po <- st_read("C:/Users/Amin/Desktop/Data_T/Administration/Amhara_woreda_recent_boundary.shp")
+st_geometry_type(sh_po)
+st_crs(sh_po)
+st_bbox(sh_po)
+ggplot() + 
+  geom_sf(data = sh_po, size =1, color = "black", fill = "gray") + 
+  ggtitle("Amhara region Boundary map between 1990-2020") + 
+  coord_sf()
+```
+
+
+# Changing coordinate systems
+
+
+```{r}
+library(dplyr)
+library(MASS)
+library(raster)
+s.sf.gcs <- st_transform(sh_po, "+proj=longlat +datum=WGS84")
+st_crs(s.sf.gcs)
+crs(s.sf.gcs)
+```
+
+
+# Take care of considering the Lake Tana data in analysis which may distort the results of the analysis.
+
+### Removing or deleting data which satisfies a certain conditions 
+
+
+
+# ploting data
+
+```{r}
+ ggpairs(Dat_week, columns=c(9, 30:41))
+```
+
+
+
+
+```{r}
+attach(Dat_week)
+ggplot(Dat_week,aes(x=factor(`Budget Year`),y=TM))+geom_boxplot(fill="blue",alpha=0.8)+
+  scale_x_discrete(name="Physical year")+
+  scale_y_continuous(name="Malaria cases per week")+
+  theme(text=element_text(size = 16),plot.title=element_text(size=18,face="bold"))
+
+```
+
+
+## Grouping by woreda names
+
+```{r}
+library(sf)
+group_IG <- group_by(Dat_week, Woreda_Nam)
+MPR.av <- summarise(group_IG, TM.mean = mean(TM))
+s.sf.gcs$Tmal<-MPR.av$TM.mean
+s.sf.gcs$Tmal
+```
+
+
+# Mapping the spatial data
+ # GGHB.IG <- spTransform(GGHB.IG, CRS("+proj=longlat +datum=WGS84 +no_defs"))
+ #Then a map of SMR can be drawn using the following code.
+
+```{r}
+ library(rgdal)
+
+  library(leaflet)
+  colours <- colorNumeric(palette = "YlOrRd", domain = s.sf.gcs$Tmal)
+  map1 <- leaflet(data=s.sf.gcs) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~colours(Tmal), weight=1, color="",
+      fillOpacity = 0.7) %>%
+    addLegend(pal = colours, values = s.sf.gcs$Tmal, opacity = 2,
+     title="MPR") %>%
+   addScaleBar(position="bottomleft")
+ map1
+```
+
+
+
+## Generating the spatial weight matrix
+```{r}
+ library("spdep")
+ W.nb <- poly2nb(s.sf.gcs, row.names = MPR.av$Woreda_Nam)
+ W.list <- nb2listw(W.nb, style = "B")
+ W <- nb2mat(W.nb, style = "B")
+ 
+```
+
+
+
+# spatiotemporal model
+
+```{r}
+ form <- TM ~ Elevation +Land_Surface_temp + NDVI + Spec_humudity +Max_tempertaure + Min_temperature +Rain_fall + Soil_moisture +offset(log(Population))
+                     
+model1 <- glm(formula = form, family = "poisson",data = Dat_week,offset = log(Population))
+ resid.glm <- residuals(model1)
+ summary(model1)$coefficients
+ summary(model1)$dispersion
+print(model1)
+coef(model1)
+logLik(model1)
+
+ 
+
+```
+
+
+
+
+# Modeling with out covariate
+
+
+
+
+
+
+```{r}
+length(Elevation)
+length(Land_Surface_temp)
+length(Soil_moisture)
+length(Rain_fall)
+length(Min_temperature)
+length(Max_tempertaure)
+length(NDVI)
+length(Spec_humudity)
+length(TM)
+length(Population)
+
+```
+
+
+
+```{r}
+library("CARBayesST")
+set.seed(123456)
+formula2<- TM ~ Elevation+Land_Surface_temp+Soil_moisture+Rain_fall+Min_temperature+Max_tempertaure+Spec_humudity+NDVI+offset(log(Population))
+chain3<- ST.CARanova(formula=formula2, family = "poisson",
+data = Dat_week, W=W, burnin =180000, n.sample = 300000, thin =100)
+
+```
+
+
+
+```{r}
+print(chain3)
+```
+```{r}
+logLik(chain3)
+```
+
+
+```{r}
+summary(chain3)
+```
+
+```{r}
+summary(chain3$samples)
+```
+# fitted values
+
+```{r}
+Yfitted<-fitted.values(chain3)
+write.csv(Yfitted,"C:/Users/Amin/Desktop/Data_T/fitted_value2.csv",row.names = FALSE)
+```
+
+# Residuals 
+```{r}
+res<-residuals(chain3)
+write.csv(res,"C:/Users/Amin/Desktop/Data_T/residuals.csv",row.names = FALSE)
+```
+
+# Model fit
+
+```{r}
+chain3$modelfit
+```
+
+```{r}
+A<-chain3$samples
+```
+
+# Trace Plot of parameters
+
+```{r}
+library(mcmc)
+library(coda)
+par(mfrow=c(5,2))
+b.sample<-mcmc.list(chain3$samples$beta)
+K<-b.sample[,1:9]
+plot(K,col="red")
+```
+
+
+# Accept: acceptance probability for the parameters
+
+```{r}
+chain3$accept
+```
+
+```{r}
+chain3$samples
+```
+
+
