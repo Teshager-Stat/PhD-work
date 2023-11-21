@@ -1,0 +1,416 @@
+---
+title: "Project on Spatial Modeling and Visualization of Health Data using R: Lip Cancer in Scotland"
+author: "Teshager Zerihun , Bahir Dar University, Bahir Dar, Ethiopia"
+date: "Submitted to: Dr. Paula Moraga, Lancaster University, UK"
+output:html_document: default
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+library(sp)
+library(raster)
+library(SpatialEpi)
+data(scotland)
+d <- scotland$data
+map <- scotland$spatial.polygon
+proj4string(map) <- "+init=epsg:27700 +proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717
++x_0=400000 +y_0=-100000 +datum=OSGB36 +units=km +no_defs +ellps=airy
++towgs84=446.448,-125.157,542.060,0.1502,0.2470,0.8421,-20.4894"
+map <- spTransform(map, CRS("+proj=longlat +init=epsg:27700"))
+rownames(d) <- d$county.names
+map <- SpatialPolygonsDataFrame(map, d, match.ID = TRUE)
+map$areaid <- map$county.names
+d$areaid <- d$county.names
+d$cases <- d$cases
+d$Expected <- d$expected
+d$covariate <- d$AFF
+order <- match(map$areaid, d$areaid)
+map@data <- d[order, c("areaid", "cases", "Expected", "covariate")]
+map <- SpatialPolygonsDataFrame(map, d, match.ID = TRUE)
+```
+
+
+### 1. Description of Data
+The data were collected from 56 Counties in Scotland about the number of male residents with lip cancer in the year between 1975 and 1980. The data had four objects described as:  
+
+1. geo: a table of county IDs, x-coordinates (eastings) and y-coordinates (northings) of the geographic    centroid of each county in Scotland.  
+
+2. data: a table of county IDs, number of cases having lip cancer, proportion of the population engaged in agriculture, fishery or forestry (AFF), population and strata information. 
+
+3. spatial.polygon: is a Spatial Polygons class map of Scotland
+
+4. polygon: is a polygon map of Scotland
+
+
+### 2. Calculate Standardized Mortality Ratio (SMR) of Lip Cancer for each County of Scotland
+
+Standardized Mortality Ratio (SMR) is the ratio of the obsreved number of death among males due to lip cancer and the expected number of death due lip cancer would be expected, based on the the age and sex-specific rates in the standard population and the population size of the study population by the same age/sex groups. 
+Let \(Y_i\) be the number of males having lip cancer in county \(i\) and \(E_i\) be expected numebr of males having lip cancer in county \(i\) (number expected cases if area had the same disease rate as the standard population). Then the standard mortality ratio is denoted by SMR and gives as
+
+  \[SMR_i=\frac{Y_i}{E_i}\]
+  
+
+The \(SMR_i\) which is greater than 1 indicates the presence of excess death in the population due to lip cancer.
+
+Expected cases calculated using indirect standardization
+
+\[E_i=\sum{r^s_j n_j^i}\] for \(j=1,\ldots,m\)
+
+where 
+
+ \(r^s_j\) is disease rate in strata j in standard population and given as
+ 
+   \[r^s_j=\frac{ \mbox{number disease cases}}{\mbox {population in strata j in standard population}}\] 
+   
+  \(n^i_j\) population in strata j in area i
+
+   strata \(j\) can indicate age group, sex, etc
+
+
+```{r}
+d$SMR=d$cases/d$Expected
+d$SMR=round(d$SMR,2)
+map <- SpatialPolygonsDataFrame(map, d, match.ID = TRUE)
+```
+
+
+
+
+
+### 3. Creating DT Table Create a DT table with columns area id, number of observed cases, number of expected cases, covariate, and SMR. 
+
+
+The DT table is created to show area id, observed and expected number of males  with lip cancer, proportion of the population engaged in agriculture, fishing, or forestry (AFF) and standardized mortatlity rate (SMR) interactively. It is also used to  visualize the order of the county in observed, expected and SMR of lip cancer in Scotland between 1975-1980. 
+
+
+
+```{r}
+library(DT)
+DT::datatable(map@data[, c("areaid", "cases", "Expected", "covariate", "SMR")],
+              rownames = FALSE, options = list(pageLength = 10))
+```
+Table 1: DT Table for area id, onserved and expected number of cases covariate and SMR
+
+
+
+The first three county of scotland which had highest level of Standardized Mortality Ratio (SMR) were skye-lochalsh, banff-buchan and caithness, respectively. Among 56 counties in Scotland 33 of them had higher risk of lip cancer (\(SMR_i\)>1) as compared with the expected number of males with lip cancer in the standard population.
+
+
+
+
+
+### 4. Explain the difference between SMR and RR. 
+
+1.Standard mortality ratio (\(SMR\)) is the ratio of Observed number of cases and expected number of cases due to specific cause of disease or death in the standardized population with different population structure. The cause of the disease or death may depends on the objectives of the investigations like death due to differnt cancers, malaria, HIV,...etc. 
+
+Mathematically, it is defined as:
+
+  \[SMR_i=\frac{Y_i}{E_i}\]
+ where \(Y_i\) be the number of cases in a specific county and
+      \(E_i\) be expected numebr of cases in the given county. 
+      \(i=1,\ldots,n\)
+
+
+2. Relative risk (\(RR\)is the ratio of the incidence of the death/disease in the exposed group and the incidence of death/disease in the unexposed group. Suppose that males who were engaged in  agriculture, fishery or Forestry (AFF) are exposed to lip cancer and other working areas (NAFF) are categorized in the unexposed group (Lawson and Williams, 2001). The relative risk (\(RR\)) of county \(i=1,\ldots,n\) is defined as
+
+   \[RR_i=\frac{P_{AFF(i)}}{P_{NFF(i)}}\]
+
+where 
+
+\(P_{AFF(i)}\): is proportion of males having lip cancer in the exposed group (\(AFF\)). 
+\(P_{NAFF(i)}\): is the proportion of males having lip cancer in the unexposed group (\(NAFF\)).
+  county: \(i=1,\ldots,n\)
+
+
+SMRs may be misleading and insufficiently reliable in areas with small populations.Incontrast, estimating relative risk using model-based approaches enable to incorporate covariates and borrow information from neighboring areas to improve local estimates, resulting in the smoothing of extreme rates based on small sample sizes. Therefore, model based estimation of RR gives more reliable estimate than SMR for area with small population size. 
+
+
+
+
+
+### 5. Fit a spatial model to obtain the RRs for each of the areas
+
+The relative risk (RR) is estimated using model based apporach. Let \(Y_i\) and \(E_i\) be the observed and expected number of males having lip cancer in county \(i\), respectively and let \(\theta_i\) be the relative risk of lip cancer in county \(i=1,\ldots,56\). 
+The number of lip cancer cases given the relative risk (disease risk) follows a poisson distribution with (\(E_i\times\theta_i\)) mean rate of lip cancer occurrences. That is,
+
+\[y_i|\theta_i\sim Poisson(E_i\times\theta_i),i=1,\ldots,n,\]
+
+\[\log(\theta_i)=\beta_0 + \beta_1x_i +u_i +v_i.\]
+
+
+where
+\(\beta_0\) is the intercept or the log of the RR when all covariates and spatial effects are removed.
+\(x_i\) is the proportion of males engaged in Agriculture, Forestry and Fishery (AFF) in county \(i=1,\ldots,56.\)
+
+\(u_i\) is an structured spatial effect to account for the spatial dependence between relative risks. 
+
+\(v_i\) is an unstructured spatial effect to account for independent area-specific noise.  
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+library(Matrix)
+library(spData)
+library(spdep)
+library(spDataLarge)
+library(INLA)
+n <- poly2nb(map)
+head(n)
+```
+
+```{r}
+nb2INLA("map.adj", n)
+g <- inla.read.graph(filename = "map.adj")
+```
+
+The structured and unstructured spatial effects are assigned \(1,\ldots,56\) from data at the map object. 
+
+```{r}
+map$re_u <- 1:nrow(map@data)
+map$re_v <- 1:nrow(map@data)
+```
+
+The observed number of lip cancer as a function of AFF, stuctured and unstructured spatial effects. 
+
+```{r}
+formulas <- cases ~ covariate + f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid")
+
+```
+
+Modeling observed number of lip cancer given relative risk or disease risk using poisson distribution.  
+
+```{r}
+result <- inla(formulas, family = "poisson", data = map@data, E = Expected, control.predictor = list(compute = TRUE))
+```
+
+```{r}
+summary(result)
+```
+
+
+
+
+
+### 6. What is the effect of the covariate on the disease risk?
+
+From summary of the fitted model, covariate (proportion of males engaged in agriculture,fishery and forestry) is \(\hat\beta_1=\) 4.33 with a 95% credible confidence interval (1.7435, 4.3562) and is significantly affecting lip cancer risk in the county of Scotland since the 95% confidence interval didn't include zero.This result is supported by ploting the posterior distribution of covariate (AFF) coefficient using smoothing of the marginal distribution of coefficients with.smarginal() and ggplot() functions. 
+
+
+
+
+
+```{r}
+library(ggplot2)
+marginal <- inla.smarginal(result$marginals.fixed$covariate)
+marginal <- data.frame(marginal)
+ggplot(marginal, aes(x = x, y = y)) + geom_line() + labs(x = expression(beta[1]), y = "Density") +
+  geom_vline(xintercept = c(result$summary.fixed[2,3],result$summary.fixed[2,5]), col = c("red","blue")) + theme_bw()
+```
+Fig 1: The 95% confidence interval of the effect of covariate (\(\hat\beta_1\))) on the disease risk
+
+
+The plot also showed that the 95% credible confidence interval of the coefficient of covariate (AFF) did not include zero and for a unit increase in the proportion of males engaged in AFF would have a higher log of lip cancer risk.  
+
+
+
+
+
+### 7. Create a DT table with columns area id, number of observed cases, number of expected cases, covariate,SMR, RR, lower and upper limits of 95% CI of RR.
+
+
+
+In order to constract interactive table with area id, number of observed cases, number of expected cases, covariate, SMR, RR, lower and upper limits of the 95% CI of RR, we have attach the disease  risk (RR) and its 95% CI from fitted values of the model to data at map object. 
+
+
+The disease risk estimates and uncertainty for each of the counties are given by the mean posterior and the 95% credible intervals of \(\theta_i\), \(i=1,\ldots,n\) which are in res$summary.fitted.values and attached to data at map object using the following command.
+
+
+```{r}
+map$RR <- round(result$summary.fitted.values[,"mean"],2)
+map$LL <- round(result$summary.fitted.values[, "0.025quant"],2)
+map$UL <- round(result$summary.fitted.values[, "0.975quant"],2)
+```
+
+
+
+```{r}
+library(DT)
+DT::datatable(map@data[, c("areaid", "cases", "Expected", "covariate", "SMR", "RR", "LL","UL")],  
+    rownames =FALSE, options=list(pageLength = 10),selection = c("multiple"),class="cell-border stripe", editable = FALSE)
+```
+
+Table 2: DT Table of Lip cancer with area id, SMR, RR and other covariates  
+
+
+
+Skye-lpchalsh, Banff-buchan, Caithness, Sutherland and Ross-cromarty were the first five counties which had higher lip cancer risk with relative risk of 4.96, 4.39, 3.62, 3.57 and 3.33, respectively.  The first five counties with higher standard mortality ratio were Skye-lpchalsh, Banff-buchan, Caithness, Sutherland, Berwickshire and Ross-cromatry with SMR of 6.43, 4.48, 3.67, 3.6 and 3.49, respectively. The first five ranking showed that RR and SMR results are not give the same ranking, that is, SMR is affected by the size population in  the county. The counties with smaller lip cancer risk were Glasgow, Eastwood and Strathkelvin. 
+
+
+
+
+### 8. Create a leaflet map that shows RR values and give a short description of the map.
+
+
+```{r}
+library(leaflet)
+l <- leaflet(map) %>% addTiles()
+pal <- colorNumeric(palette = "YlOrRd", domain = map$RR)
+l %>% addPolygons(color = "grey", weight = 1, fillColor = ~pal(RR), fillOpacity = 0.5) %>%
+  addLegend(pal = pal, values = ~RR, opacity = 0.8, title = "RR", position = "bottomright")
+```
+
+Fig 2: The leaflet map of relative risk of lip cancer in the county of Scotland between 1975 and 1980.  
+
+
+
+The estimated lip cancer risk  of counties in Scotland is showed in an interactive map using leaflet. In the map, we add labels that appear when mouse hovers over the counties showing information about observed and expected counts, SMRs, males AFF proportions, RRs, and lower and upper limits of 95% credible intervals.
+
+
+
+
+```{r}
+
+pal <- colorNumeric(palette = "YlOrRd", domain = map$RR)
+labels <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> Expected: %s <br/>
+                  AFF proportion: %s <br/>SMR: %s <br/>RR: %s (%s, %s)",
+                map$areaid, map$cases,  round(map$Expected, 2),  map$covariate, round(map$SMR, 2),
+                  round(map$RR,2), round(map$LL, 2), round(map$UL, 2)) %>%
+  lapply(htmltools::HTML)
+
+leaflet(map) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(RR),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    label = labels,
+labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~RR, opacity = 0.5, title = "RR", position = "bottomright")
+```
+
+Fig 3: Interactive map of Lip Cancer risk in the county of Scotland between 1975 and 1980.
+
+
+
+Counties shaded with dark red color had higher risk of lip cancer.Ingeneral, counties found in the Northern region of Scotland had higher lip cancer rate that the souther part of the country and we can see the name of the counties, observed and expected number of cases, SMR and RR of lip cancer in county by moving the mouse cursor on the interactive leaflet map. 
+
+
+
+
+### 9. Flexdashboard Code that includes a title, the leaflet map and the DT table.
+
+
+
+---
+title: "Risk rate of Lip cancer in the county of scotland "
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r eval=FALSE, include=FALSE}
+library(flexdashboard)
+library(sp)
+library(SpatialEpi)
+library(DT)
+library(Matrix)
+library(spData)
+library(spdep)
+library(spDataLarge)
+library(INLA)
+library(leaflet)
+
+data(scotland)
+d <- scotland$data
+map <- scotland$spatial.polygon
+map <- spTransform(map, CRS("+proj=longlat +init=epsg:27700"))
+rownames(d) <- d$county.names
+map <- SpatialPolygonsDataFrame(map, d, match.ID = TRUE)
+map$areaid <- map$county.names
+d$areaid <- d$county.names
+d$cases <- d$cases
+d$Expected <- d$expected
+d$covariate <- d$AFF
+order <- match(map$areaid, d$areaid)
+map@data <- d[order, c("areaid", "cases", "Expected", "covariate")]
+d$SMR=round(d$cases/d$Expected,2)
+n <- poly2nb(map)
+nb2INLA("map.adj", n)
+g <- inla.read.graph(filename = "map.adj")
+map <- SpatialPolygonsDataFrame(map, d, match.ID = TRUE)
+map$re_u <- 1:nrow(map@data)
+map$re_v <- 1:nrow(map@data)
+formulas <- cases ~ covariate + f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid")
+result <- inla(formulas, family = "poisson", data = map@data, E = Expected, control.predictor = list(compute = TRUE))
+map$RR <- round(result$summary.fitted.values[,"mean"],2)
+map$LL <- round(result$summary.fitted.values[, "0.025quant"],2)
+map$UL <- round(result$summary.fitted.values[, "0.975quant"],2)
+l <- leaflet(map) %>% addTiles()
+pal <- colorNumeric(palette = "YlOrRd", domain = map$RR)
+l %>% addPolygons(color = "grey", weight = 1, fillColor = ~pal(RR), fillOpacity = 0.5) %>%
+  addLegend(pal = pal, values = ~RR, opacity = 0.8, title = "RR", position = "bottomright")
+```
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### Leaflet Map of Lip Cancer in Scotland
+
+```{r eval=FALSE, include=FALSE}
+pal <- colorNumeric(palette = "YlOrRd", domain = map$RR)
+labels <- sprintf("<strong> %s </strong> <br/> Observed: %s <br/> Expected: %s <br/>
+                  AFF proportion: %s <br/>SMR: %s <br/>RR: %s (%s, %s)",
+                map$areaid, map$cases,  round(map$Expected, 2),  map$covariate, round(map$SMR, 2),
+                  round(map$RR,2), round(map$LL, 2), round(map$UL, 2)) %>%
+  lapply(htmltools::HTML)
+
+leaflet(map) %>% addTiles() %>%
+    addPolygons(color = "grey", weight = 1, fillColor = ~pal(RR),  fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    label = labels,
+labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px", direction = "auto")) %>%
+    addLegend(pal = pal, values = ~RR, opacity = 0.5, title = "RR", position = "bottomright")
+```
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+### Table of relative risk of lip cancer among counties of Scotland between 1975 and 1980
+```{r eval=FALSE, include=FALSE}
+DT::datatable(map@data[, c("areaid", "cases", "Expected", "covariate", "SMR", "RR", "LL","UL")],  
+    rownames =FALSE, options=list(pageLength = 10),selection = c("multiple"),class="cell-border stripe", editable = FALSE)
+```
+
+
+ 
+ 
+ 
+ 
+### 10. Write a summary of the analysis conducted. 
+
+
+
+The lip cancer data were collected from 56 counties of Scotland between 1975 and 1980. The data have four objects which had several informations like county IDs, eating and northing of geographic centroid, observed number of cases, expected numebr of cases, proportion of populations engaged in agriculture, fishery or forestry (AFF), population and strata information, spatial Polygon class number map and ploygon map of Scotland. The objective of this study is to estimate the Standard mortality ratio (SMR) and disease risk (RR) of lip cancer among the counties of Scotland. 
+
+
+The SMR is a ratio of the observed number of cases and expected number of cases. The SMR may not be reliable in counties having smaller population size. However, estimating disease risk using model based approach or using INLA enable to incorparate covariate and borrow information from neighboring areas.  
+
+Using SMR, the five top cunties with higher or excess risk were Skye-lpchalsh, Banff-buchan, Caithness, Sutherland, Berwickshire and Ross-cromatry with SMR of 6.43, 4.48, 3.67, 3.6 and 3.49, respectively.The disease risk were significanlty associated with proportion of males engaged in agriculture, fishery or forestry (\(\hat\beta_1=\) 4.33 with a 95% credible confidence interval (1.7435, 4.3562)) and the first five counties having higher lip cancer risk were Skye-lpchalsh, Banff-buchan, Caithness, Sutherland and Ross-cromarty. Finally, the interactive leaflet showed that the norther counties had higher lip cancer risk than southern counties of Scotland. 
+
+
+
+ 
+
+ 
+ 
+ 
+
