@@ -1,0 +1,1631 @@
+---
+title: "GAM Modeling for ST Data"
+author: "Teshager"
+date: "12/11/2021"
+output: html_document:
+keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#1.  Libraries 
+## 1.1 Activating libraries
+```{r}
+set.seed(12354)
+library(sp)
+library(MASS)
+#library(gamclass)
+#library(classInt)
+#library(class)
+#library(foreach)
+#library(mda)
+#library(gamsel)
+library(nlme)
+library(mgcv)
+library(ggplot2)
+library(dplyr)
+#library(viridisLite)
+#library(viridis)
+library(BayesXsrc)
+library(colorspace)
+library(R2BayesX)
+library(splines)
+library(Matrix)
+library(usethis)
+library(parallel)
+#library(INLA)
+library(gratia)
+library(tidyverse)
+library(qgam)
+library(mgcViz)
+library(rgl)
+```
+
+
+
+
+# 2. Importing Data
+```{r}
+M_Dat<- read.csv("D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Monthly Malarial cases final.csv")
+M_Dat$Woreda_Nam<-M_Dat$Woreda
+M_Dat$SMR<-(M_Dat$TM/M_Dat$Population)*10000
+M_Dat$T_cos<-cos((3.14*M_Dat$Time)/6)
+M_Dat$T_sin<-sin((3.14*M_Dat$Time)/6)
+M_Dat$Month_1<-M_Dat$Time
+M_Dat$Month_2<-M_Dat$Time
+M_Dat$Month_3<-M_Dat$Time
+M_Dat$FiD1<-M_Dat$FID+1
+M_Dat$FiD2<-M_Dat$FID+1
+M_Dat$Pop<-log(M_Dat$Population)
+M_Dat<- data.frame(M_Dat)
+M_Dat$FiD.T<-seq(1:14592)
+M_Dat$Longitude<-M_Dat$Lngtd_X
+M_Dat$Latitude<-M_Dat$Lattd_Y
+head(M_Dat)
+```
+
+# 3. Activating packages for spatial statistics and importing polygon shapefiles of the study region
+
+```{r}
+library(spDataLarge)
+library(spData)
+library(sp)
+library(PROJ)
+library(geos)
+library(sf)
+library(spacetime)
+library(spdep)
+Amhara<- st_read("D:/Administration/Amhara_woreda_recent_boundary.shp")
+```
+
+
+## 3.1 Creating spacetime ST_Data format in R for spatiotemporal clustering having three layers i.e. the ST data set,  polygon shapefile and time slots
+
+```{r}
+spat_poly<- sf:::as_Spatial(Amhara$geometry)
+T_time<-seq(as.Date("2012/7/28"), by = "month", length.out = 96)
+Spatemp_Dat<-STFDF(spat_poly,T_time,data=M_Dat)
+```
+
+# 4. Importing Shapefile for all data sets (1:14592) ... serisouly concerned about the empty geometry issue.  
+
+The shapefile polygon having data for all time points across landscape or districts of the region and it needs critical evaluations of appropriateness of the data since some geometries are empty.
+
+```{r}
+ST_shape<- sf::read_sf("C:\\Users\\DTU\\Desktop\\ST\\STC.SHP")
+STS<-ST_shape[order(ST_shape$Time,ST_shape$FID_1),]
+STS$Cons<-rep(1,14592)
+```
+
+
+
+# 4.Preparing the data for Generalized additive model format
+
+```{r}
+order=rep(1:152)
+nm<-Amhara%>% transmute(Longitude=X,Latitude=Y,order=order,FID=FID1)
+ggplot(aes(x=Time,y=TM),data=M_Dat)+geom_point()+ theme_bw()
+```
+
+
+
+### Reading shapefile using readOR function
+```{r}
+library(rgdal)
+library(PROJ)
+```
+
+
+```{r}
+#Shap<-readOGR(dsn="D:/Administration", layer="Amhara_woreda_recent_boundary")
+GAM_shap<-readOGR(dsn="D:/Administration", layer="Eyasu_GAM")
+```
+
+
+
+
+```{r}
+library(rgdal)
+library(geos)
+library(maptools)
+library(gpclib)
+gpclibPermit()
+df<- droplevels(as(Spatemp_Dat@data, 'data.frame'))
+#df$TM<-DD$TM
+aea.proj <- " +proj=utm +zone=37 +a=6378249.145 +rf=293.465 +towgs84=-166,-15,204,0,0,0,0 +units=m+no_defs "
+shp22 <- spTransform(GAM_shap, CRS(aea.proj))  # project to Albers
+shpf <- fortify(Spatemp_Dat@sp@polygons, region = "FID1")
+```
+
+
+```{r}
+nb <- poly2nb(shp22, row.names = df$FID1)
+names(nb) <- attr(nb,"region.id")
+str(nb[1:6])
+#df$TM<-DD$TM
+```
+
+
+# For one Month Data and mrf smooth function of districts
+```{r}
+M_Dat<- read.csv("D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Monthly Malarial cases final.csv")
+M_Dat$Woreda_Nam<-M_Dat$Woreda
+M_Dat$SMR<-(M_Dat$TM/M_Dat$Population)*10000
+M_Dat$T_cos<-cos((3.14*M_Dat$Time)/6)
+M_Dat$T_sin<-sin((3.14*M_Dat$Time)/6)
+M_Dat$Month_1<-M_Dat$Time
+M_Dat$Month_2<-M_Dat$Time
+M_Dat$Month_3<-M_Dat$Time
+M_Dat$FiD1<-M_Dat$FID+1
+M_Dat$FiD2<-M_Dat$FID+1
+M_Dat$Pop<-log(M_Dat$Population)
+M_Dat<- data.frame(M_Dat)
+M_Dat$FiD.T<-seq(1:14592)
+M_Dat$Longitude<-M_Dat$Lngtd_X
+M_Dat$Latitude<-M_Dat$Lattd_Y
+head(M_Dat)
+```
+
+
+```{r}
+#DD<-M_Dat[1:152,]
+#DD$FID1<-DD$FiD1
+#df$TM<-DD$TM
+#gpclibPermit()
+df$FID<-as.factor(df$FID)
+ctrl <- gam.control(nthreads = 6)
+mm <- gam(TM ~s(Rain_fall,bs="tp",k=20)+s(Max_temp,bs="tp",k=20)+ s(FID, bs = 'mrf',k=152, xt = list(nb = nb)), data = df,
+          method = 'REML',control = ctrl,family = nb()) 
+summary(mm)
+```
+
+```{r}
+gam.check(mm)
+plot.gam(mm)
+```
+
+
+
+
+```{r}
+library(mgcv)
+b2 <- gam(TM ~ s(FiD1,bs="mrf",xt=xt),data=M_Dat,method="REML")
+plot(b2,scheme=1)
+```
+
+
+
+```{r}
+ggplot(aes(x=Longitude,y=Latitude,col=TM), data=M_Dat)+
+   geom_sf(data=nm,fill=NA, col="black")+geom_point()+theme_bw()
+```
+### Modeling space and time separately 
+
+
+```{r}
+Mal_cases= gam(TM~ s(Longitude,Latitude)+s(Time),
+                          data=M_Dat,family=poisson,method="REML")
+layout(matrix(1:2,ncol=2))
+plot(Mal_cases,scheme=2)
+layout(1)
+summary(Mal_cases)
+```
+### Modeling space and time interactively 
+
+
+############# Joint model of space and time #############
+```{r}
+Mal_model = gam(TM~ s(Longitude,Latitude)+s(Time) + 
+                          ti(Longitude, Latitude,Time, d=c(2,1)),
+                          data=M_Dat,family=poisson,method="REML")
+layout(matrix(1:2,ncol=1))
+plot(Mal_model,scheme=2)
+layout(1)
+summary(Mal_model)
+```
+
+############# Joint model of space and time with covariates #############
+```{r}
+Model_2 = gam(TM~ -1+LLIN_ATLEASTONE+s(Min_temp)+s(Max_temp)+s(NDVI)+
+                s(Landsurf_temp)+ s(Rain_fall)+s(Soil_mois)+s(Elevatn)+
+                s(Longitude,Latitude)+s(Time) + ti(Longitude, Latitude,Time, d=c(2,1)),
+                          data=M_Dat,family=poisson,method="REML")
+```
+
+
+
+```{r}
+layout(matrix(1:1,ncol=1))
+plot(Model_2,scheme=2)
+layout(1)
+summary(Model_2)
+```
+
+
+```{r}
+Model_2 = gam(TM~ -1+LLIN_ATLEASTONE+s(Min_temp,bs='ps', sp=0.6)+s(Max_temp)+s(NDVI)+
+                s(Landsurf_temp)+ s(Rain_fall)+s(Soil_mois)+s(Elevatn)+
+                s(Longitude,Latitude)+s(Time) + ti(Longitude, Latitude,Time, d=c(2,1)),
+                          data=M_Dat,family=poisson,method="REML")
+```
+
+
+
+
+```{r}
+layout(matrix(1:1,ncol=1))
+plot(Model_2,scheme=2)
+layout(1)
+summary(Model_2)
+```
+
+
+
+
+```{r}
+library(mgcv)
+library(ggplot2)
+library(dplyr)
+library(viridis)
+set.seed(1)
+n=25
+dat = as.data.frame(expand.grid(x1 = seq(-1,1,length.out = n),
+                                x2= seq(-1,1,length=n)))
+dat$x1_margin = -dat$x1
+dat$x2_margin = dnorm(dat$x2,0,0.5)
+dat$x2_margin = dat$x2_margin - mean(dat$x2_margin)
+
+layout(matrix(1:2,ncol=2))
+plot(x1_margin~x1,type="l", data= dat%>%filter(!duplicated(x1)))
+plot(x2_margin~x2,type="l", data= dat%>%filter(!duplicated(x2)))
+layout(1)
+```
+```{r}
+dat$x1x2_tensor = dat$x1_margin*dat$x2_margin
+ggplot(aes(x=x1,y=x2,fill=x1x2_tensor),data=dat)+
+  geom_tile()+
+  scale_x_continuous(expand=c(0,0))+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_viridis()+
+  theme_bw()
+```
+
+
+
+## Tensor product using `te()` the interaction between two variables
+```{r}
+library(viridis)
+n=25
+dat$y = rnorm(n^2, dat$x1x2_tensor+dat$x1_margin+dat$x2_margin,0.5) 
+te_demo = gam(y~te(x1, x2, k=4^2),data=dat,method="REML") 
+plot.gam(te_demo,scheme = 2)
+summary(te_demo)
+print(te_demo$sp) 
+```
+
+### Tensor interaction smooths
+There are many cases when we want an estimate of both the average effect of each
+variable as well as the interaction. This is tough to extract from just using ti from the main effects. 
+
+
+```{r}
+library(mgcv)
+ti_demo =gam(y~s(x1,k=4)+s(x2,k=4) +ti(x1, x2, k = 4^2),
+              data=dat,method="REML")
+layout(matrix(1:3,nrow=1))
+plot.gam(ti_demo,scheme = 2)
+layout(1)
+summary(ti_demo)
+print(ti_demo$sp) 
+```
+
+## 3. Spatiotemporal models
+
+
+```{r}
+library(maps)
+florida_map = map_data("state","florida")
+florida<-florida_map%>%transmute(Longitude= long, Latitude = lat, order=order)
+florida_map
+florida
+```
+
+
+
+```{r}
+library(mgcv)
+#library(demandr)
+library(grid)
+library(ggplot2)
+library(splines)
+```
+
+
+```{r}
+### Simulated data
+set.seed(3)
+x <- seq(0,2*pi,0.1)
+z <- sin(x)
+y <- z + rnorm(mean=0, sd=0.5*sd(z), n=length(x))
+d <- cbind.data.frame(x,y,z)
+
+d1 <- cbind.data.frame(data.frame(predict(smooth.spline(x=d, spar=0), x)), z)
+e <- sqrt(sum((d1$z-d1$y)**2))
+e
+p1 <- ggplot(data=d, aes(x=x, y=y)) + geom_point() + geom_line(data=d1, aes(x=x, y=y), linetype=1) + geom_line(aes(x=x, y=z), linetype=2) + ggtitle(paste0("Lambda=0, Dist = ", round(e,2)))
+
+d2 <- cbind.data.frame(data.frame(predict(smooth.spline(x=d, spar=0.3), x)), z)
+e <- sqrt(sum((d2$z-d2$y)**2))
+p2 <- ggplot(data=d, aes(x=x, y=y)) + geom_point() + geom_line(data=d1, aes(x=x, y=y), linetype=1) + geom_line(aes(x=x, y=z), linetype=2) + ggtitle(paste0("Lambda=0.3, Dist = ", round(e,2)))
+e
+
+d3 <- cbind.data.frame(data.frame(predict(smooth.spline(x=d, spar=0.6), x)), z)
+e <- sqrt(sum((d3$z-d3$y)**2))
+e
+p3 <- ggplot(data=d, aes(x=x, y=y)) + geom_point() + geom_line(data=d3, aes(x=x, y=y), linetype=1) + ylab("") + geom_line(aes(x=x, y=z), linetype=2) + ggtitle(paste0("Lambda=0.6, Dist = ", round(e,2)))
+
+d4 <- cbind.data.frame(data.frame(predict(smooth.spline(x=d, spar=1), x)), z)
+e <- sqrt(sum((d4$z-d4$y)**2))
+e
+p4 <- ggplot(data=d, aes(x=x, y=y)) + geom_point() + geom_line(data=d4, aes(x=x, y=y), linetype=1) + ylab("") + geom_line(aes(x=x, y=z), linetype=2) + ggtitle(paste0("Lambda=1, Dist = ", round(e,2)))
+
+multiplot(p1, p2, p3, p4, cols=2)
+
+d5 <- cbind.data.frame(data.frame(ksmooth(d$x, d$y, kernel="box", n.points=length(x), bandwidth=1.5)), z)
+p5 <- ggplot(data=d, aes(x=x, y=y)) + geom_point() + geom_line(data=d5, aes(x=x, y=y), linetype=1) + ylab("") + geom_line(aes(x=x, y=z), linetype=2) + ggtitle("Basic Runnuing Mean")
+
+d6 <- cbind.data.frame(loess(y ~ x, data=d, span=0.6)$fitted, z, y, x)
+names(d6) <- c("loess", "z", "y", "x")
+p6 <- ggplot(data=d, aes(x=x, y=y)) + geom_point() + geom_line(data=d6, aes(x=x, y=loess), linetype=1) + ylab("") + geom_line(aes(x=x, y=z), linetype=2) + ggtitle("Loess")
+
+multiplot(p5, p6, cols=2)
+
+min(x)
+
+max(x)
+
+quantile(x, probs=c(0.25, .50, .75))
+
+
+B <- bs(x, degree=3, intercept=TRUE, Boundary.knots=c(0, 6.2), knots=c(1.55, 3.10, 4.65))
+model <- lm(y~0 + B)
+
+model$coef
+d7 <- cbind.data.frame(d, B, model$fitted)
+names(d7) <- c("x", "y", "z", "B13", "B23", "B33", "B43", "B53", "B63", "B73", "Spline")
+for (i in 1:7){
+   d7[,3+i] <- d7[,3+i] * model$coef[i]
+}
+
+ggplot(data=d7, aes(x=x, y=y)) + geom_point() + geom_line(data=d7, aes(x=x, y=Spline), linetype=1) + ylab("") +  geom_line(aes(x=x, y=z), linetype=2)
+p7 <- ggplot(data=d7, aes(x=x, y=y)) + geom_point() + geom_line(data=d7, aes(x=x, y=Spline), linetype=1) + ylab("") +  geom_line(aes(x=x, y=z), linetype=2) + ggtitle("Cubic B-Spline (3 inner knots, no penalty)")
+p7
+
+d7_melt <- melt(d7[,c("x", "B13", "B23", "B33", "B43", "B53", "B63", "B73", "Spline")], id.vars="x")
+
+line.cols <- terrain.colors(8)
+line.cols[8] <- "black"
+ggplot(data=d7_melt, aes(y=value, x=x, colour=variable)) + geom_line() + scale_color_manual(values=line.cols) + ylab("")  
+```
+
+## GINLA
+
+```{r}
+ require(mgcv); require(MASS)
+
+  ## example using a scale location model for the motorcycle data. A simple plotting
+  ## routine is produced first...
+
+  plot.inla <- function(x,inla,k=1,levels=c(.025,.1,.5,.9,.975),
+               lcol = c(2,4,4,4,2),lwd = c(1,1,2,1,1),lty=c(1,1,1,1,1),
+	       xlab="x",ylab="y",cex.lab=1.5) {
+    ## a simple effect plotter, when distributions of function values of
+    ## 1D smooths have been computed
+    require(splines)
+    p <- length(x) 
+    betaq <- matrix(0,length(levels),p) ## storage for beta quantiles 
+    for (i in 1:p) { ## work through x and betas
+      j <- i + k - 1
+      p <- cumsum(inla$density[j,])*(inla$beta[j,2]-inla$beta[j,1])
+      ## getting quantiles of function values...
+      betaq[,i] <- approx(p,y=inla$beta[j,],levels)$y
+    }
+    xg <- seq(min(x),max(x),length=200)
+    ylim <- range(betaq)
+    ylim <- 1.1*(ylim-mean(ylim))+mean(ylim)
+    for (j in 1:length(levels)) { ## plot the quantiles
+      din <- interpSpline(x,betaq[j,])
+      if (j==1) {
+        plot(xg,predict(din,xg)$y,ylim=ylim,type="l",col=lcol[j],
+             xlab=xlab,ylab=ylab,lwd=lwd[j],cex.lab=1.5,lty=lty[j])
+      } else lines(xg,predict(din,xg)$y,col=lcol[j],lwd=lwd[j],lty=lty[j])
+    }
+  } ## plot.inla
+
+  ## set up the model with a `gam' call...
+
+  G <- gam(list(accel~s(times,k=20,bs="ad"),~s(times)),
+            data=mcycle,family=gaulss(),fit=FALSE)
+  b <- gam(G=G,method="REML") ## regular GAM fit for comparison
+
+  ## Now use ginla to get posteriors of estimated effect values
+  ## at evenly spaced times. Create A matrix for this...
+  
+  rat <- range(mcycle$times)
+  pd0 <- data.frame(times=seq(rat[1],rat[2],length=20))
+  X0 <- predict(b,newdata=pd0,type="lpmatrix")
+  X0[,21:30] <- 0
+  pd1 <- data.frame(times=seq(rat[1],rat[2],length=10))
+  X1 <- predict(b,newdata=pd1,type="lpmatrix")
+  X1[,1:20] <- 0
+  A <- rbind(X0,X1) ## A maps coefs to required function values
+
+  ## call ginla. Set int to 1 for integrated version.
+  ## Set interactive = 1 or 2 to plot marginal posterior distributions
+  ## (red) and simple Gaussian approximation (black).
+ 
+  inla <- ginla(G,A,int=0)
+
+  par(mfrow=c(1,2),mar=c(5,5,1,1))
+  fv <- predict(b,se=TRUE) ## usual Gaussian approximation, for comparison
+
+  ## plot inla mean smooth effect...
+  plot.inla(pd0$times,inla,k=1,xlab="time",ylab=expression(f[1](time))) 
+
+  ## overlay simple Gaussian equivalent (in grey) ...
+  points(mcycle$times,mcycle$accel,col="grey")
+  lines(mcycle$times,fv$fit[,1],col="grey",lwd=2)
+  lines(mcycle$times,fv$fit[,1]+2*fv$se.fit[,1],lty=2,col="grey",lwd=2)
+  lines(mcycle$times,fv$fit[,1]-2*fv$se.fit[,1],lty=2,col="grey",lwd=2)
+
+  ## same for log sd smooth...
+  plot.inla(pd1$times,inla,k=21,xlab="time",ylab=expression(f[2](time)))
+  lines(mcycle$times,fv$fit[,2],col="grey",lwd=2)
+  lines(mcycle$times,fv$fit[,2]+2*fv$se.fit[,2],col="grey",lty=2,lwd=2)
+  lines(mcycle$times,fv$fit[,2]-2*fv$se.fit[,2],col="grey",lty=2,lwd=2)
+
+  ## ... notice some real differences for the log sd smooth, especially
+  ## at the lower and upper ends of the time interval.
+```
+
+
+
+# 6.1 Final Models for spatiotemporal data 
+
+
+```{r}
+M_Dat<- read.csv("D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Genet.csv")
+M_Dat$Woreda_Nam<-M_Dat$Woreda
+M_Dat$SMR<-(M_Dat$TM/M_Dat$Population)*10000
+M_Dat$T_cos<-cos((3.14*M_Dat$Time)/6)
+M_Dat$T_sin<-sin((3.14*M_Dat$Time)/6)
+M_Dat$Month_1<-M_Dat$Time
+#M_Dat$Month_2<-M_Dat$Time
+#M_Dat$Month_3<-M_Dat$Time
+#M_Dat$FiD1<-M_Dat$FID+1
+#M_Dat$FiD2<-M_Dat$FID+1
+M_Dat$Pop<-log(M_Dat$Population)
+M_Dat<- data.frame(M_Dat)
+M_Dat$FiD.T<-seq(1:14592)
+M_Dat$Longitude<-M_Dat$Lngtd_X
+M_Dat$Latitude<-M_Dat$Lattd_Y
+head(M_Dat)
+```
+
+
+### Plotting for the time series data 
+
+```{r}
+ggplot(M_Dat,aes(x=Time,y=TM,color=FID))+geom_line(lwd=2)+theme_classic()+theme(
+  axis.title =element_text(size = 20,face = "bold"),
+  axis.text = element_text(size = 14,color = "black")
+)
+```
+
+
+### Modeling
+
+## 1. Main effects only 
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff<-bam(TM~s(Month,k=8,bs="cc")+s(year,k=4,bs="tp")+s(Longitude,Latitude, k=100,bs="ds",m=c(1,0.5))+s(Elevatn,k=15)+s(Soil_mois,k=14,bs="tp")+s(Landsurf_temp,k=20)+s(Rain_fall,k=16)+s(Min_temp,k=12)+s(Max_temp,k=15)+s(NDVI,k=18)+s(Relative.humidity,k=16),model=poisson,data = M_Dat,method = "fREML",knots = knots)
+```
+
+## Model summaries 
+```{r}
+summary(M_eff)
+gam.check(M_eff,rep=500)
+plot(M_eff)
+plot.gam(M_eff,seWithMean = TRUE)
+```
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_2<-bam(TM~LLIN_ATLEASTONE+s(Month,k=8,bs="cc")+s(Time,k=12,bs="tp")+s(year,k=4,bs="tp")+s(Longitude,Latitude, k=100,bs="ds",m=c(1,0.5))+s(Elevatn,k=15)+s(Soil_mois,k=14,bs="tp")+s(Landsurf_temp,k=20)+s(Rain_fall,k=16)+s(Min_temp,k=12)+s(Max_temp,k=15)+s(NDVI,k=18)+s(Relative.humidity,k=16),model=nb,data = M_Dat,method = "fREML",knots = knots)
+```
+
+## Model summaries 
+```{r}
+summary(M_eff_2)
+gam.check(M_eff_2,rep=500)
+plot(M_eff_2)
+```
+
+
+
+
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_3<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=12,bs="ps")+s(year,k=4,bs="tp")+s(Longitude,Latitude, k=130,bs="ds",m=c(1,0.5))+s(Elevatn,k=15,bs="tp")+s(Soil_mois,k=14,bs="ps")+s(Landsurf_temp,k=20,bs="ps")+s(Rain_fall,k=16,bs="ps")+s(Min_temp,k=30,bs="ps")+s(Max_temp,k=20,bs="ps")+s(NDVI,k=18, bs="ps")+s(Relative.humidity,k=30,bs="ps"),model=poisson,data = M_Dat,method = "fREML",knots = knots)
+```
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_3<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=12,bs="ps")+s(year,k=4,bs="tp")+s(Longitude,Latitude, k=130,bs="ds",m=c(1,0.5))+s(Elevatn,k=15)+s(Soil_mois,k=30)+s(Landsurf_temp,k=30)+s(Rain_fall,k=25)+s(Min_temp,k=30)+s(Max_temp,k=20)+s(NDVI,k=18)+s(Relative.humidity,k=30),model=poisson,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+
+```{r}
+AIC(M_eff,M_eff_2,M_eff_3)
+gam.check(M_eff_3)
+```
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_4<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=12,bs="ps")+s(year,k=8,bs="tp")+s(Longitude,Latitude, k=145,bs="ds",m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=40)+s(Landsurf_temp,k=50)+s(Rain_fall,k=50)+s(Min_temp,k=40)+s(Max_temp,k=30)+s(NDVI,k=50)+s(Relative.humidity,k=50),model=nb,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_5<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=12,bs="ps")+s(year,k=8,bs="tp")+s(Longitude,Latitude, k=145,bs="ds",m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=40)+s(Landsurf_temp,k=50)+s(Rain_fall,k=50)+s(Min_temp,k=40)+s(Max_temp,k=30)+s(NDVI,k=50)+s(Relative.humidity,k=50),model=poisson,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+
+```{r}
+AIC(M_eff,M_eff_2,M_eff_3,M_eff_4,M_eff_5)
+```
+
+
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_6<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=12,bs="ps")+s(year,k=8,bs="tp")+s(Longitude,Latitude, k=145,bs="ds",m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=40)+s(Landsurf_temp,k=50)+s(Rain_fall,k=50)+s(Min_temp,k=40)+s(Max_temp,k=30)+s(NDVI,k=50)+s(Relative.humidity,k=50),model=quasibinomial,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_7<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=80,bs="ps")+s(year,k=8,bs="tp")+s(Longitude,Latitude, k=150,bs="ds",m=c(1,0.5))+s(Elevatn,k=100)+s(Soil_mois,k=80)+s(Landsurf_temp,k=50)+s(Rain_fall,k=100)+s(Min_temp,k=70)+s(Max_temp,k=60)+s(NDVI,k=80)+s(Relative.humidity,k=80),model=quasibinomial,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_8<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=80,bs="tp")+
+               s(year,k=8,bs="tp")+s(Longitude,Latitude,k=150,bs="ds",m=c(1,0.5))+s(Elevatn,k=100)+s(Soil_mois,k=80)+s(Landsurf_temp,k=50)+s(Rain_fall,k=100)+s(Min_temp,k=70)+s(Max_temp,k=60)+s(NDVI,k=80)+s(Relative.humidity,k=80),family = nb,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+
+
+
+```{r}
+#AIC(M_eff,M_eff_2,M_eff_3,M_eff_4,M_eff_5,M_eff_6,M_eff_7,M_eff_8)
+summary(M_eff_8)
+```
+
+```{r}
+gam.check(M_eff_7)
+```
+
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_9<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=80,bs="tp")+
+               s(year,k=8,bs="tp")+s(Longitude,Latitude,k=150,bs="ds",m=c(1,0.5))+s(Elevatn,k=100)+s(Soil_mois,k=80)+s(Landsurf_temp,k=50)+s(Rain_fall,k=100)+s(Min_temp,k=70)+s(Max_temp,k=60)+s(NDVI,k=80)+s(Relative.humidity,k=80),family=poisson,data=M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+```{r}
+AIC(M_eff,M_eff_2,M_eff_3,M_eff_4,M_eff_5,M_eff_6,M_eff_7,M_eff_8,M_eff_9)
+summary(M_eff_9)
+#gam.check(M_eff_9)
+```
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_10<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=80,bs="tp")+
+               s(year,k=8,bs="tp")+s(Longitude,Latitude,k=150,bs="ds",m=c(1,0.5))+s(Elevatn,k=100)+s(Soil_mois,k=80)+s(Landsurf_temp,k=50)+s(Rain_fall,k=100)+s(Min_temp,k=70)+s(Max_temp,k=60)+s(NDVI,k=80)+s(Relative.humidity,k=80),family=nb,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+```{r}
+AIC(M_eff,M_eff_2,M_eff_3,M_eff_4,M_eff_5,M_eff_6,M_eff_7,M_eff_8,M_eff_10)
+summary(M_eff_10)
+gam.check(M_eff_10)
+```
+
+
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_eff_11<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=80,bs="tp")+
+               s(year,k=8,bs="tp")+s(Longitude,Latitude,k=150,bs="ds",m=c(1,0.5))+s(Elevatn,k=100)+s(Soil_mois,k=80)+s(Landsurf_temp,k=50)+s(Rain_fall,k=100)+s(Min_temp,k=70)+s(Max_temp,k=60)+s(NDVI,k=80)+s(Relative.humidity,k=80),family=poisson,data = M_Dat,method = "fREML",knots = knots,select = TRUE)
+```
+
+```{r}
+AIC(M_eff_10,M_eff_11)
+summary(M_eff_11)
+```
+
+```{r}
+devtools::install_github("krlmlr/ulimit")
+#ulimit::memory_limit(2000)
+```
+
+
+
+
+### 2. Intercation Models
+```{r}
+knots<-list(Month=c(0.5,12.5))
+M_I_1<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs="cc")+s(Time,k=80,bs="ps")+s(year,k=8,bs="tp")+s(Longitude,Latitude, k=150,bs="ds",m=c(1,0.5))+s(Elevatn,k=100)+s(Soil_mois,k=80)+s(Landsurf_temp,k=50)+s(Rain_fall,k=100)+s(Min_temp,k=70)+s(Max_temp,k=60)+s(NDVI,k=80)+s(Relative.humidity,k=80),family = nb,data = M_Dat,method = "fREML",knots = knots,select = TRUE,nthreads=c(4,1),discrete=TRUE)
+```
+
+```{r}
+summary(M_I_1)
+```
+
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+M_I_II<-bam(TM~LLIN_ATLEASTONE+s(Month,k=6,bs='cc')+s(Time,k=30,bs='ps')+
+               s(year,k=6)+s(Longitude,Latitude,k=120,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,5))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(120,12))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(80,6)),data = M_Dat,family=nb,method='fREML',knots = knot,nthreads=c(4,1),discrete=TRUE)
+```
+
+```{r}
+summary(M_I_II)
+```
+
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+GAM_MI<-bam(TM~LLIN_ATLEASTONE+s(Month,k=6,bs='cc')+s(Time,k=30,bs='ps')+
+               s(year,k=6)+s(Longitude,Latitude,k=120,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,5))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(120,12))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(80,6))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),NA),k=c(60,8)),data = M_Dat,family=nb(theta = 4.186,link = "log"),method='fREML',knots = knot,nthreads=c(4,1),discrete=TRUE)
+
+```
+
+
+
+
+```{r}
+#summary(M_I_II)
+AIC(GAM_MI,M_I_II,M_I_1)
+summary(GAM_MI)
+#gam.check(M_I_II)
+```
+
+
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+GAM_M_final<-bam(TM~LLIN_ATLEASTONE+s(Month,k=6,bs='cc')+s(Time,k=30,bs='ps')+
+               s(year,k=6)+s(Longitude,Latitude,k=120,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,5))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(120,12))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(90,6))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),NA),k=c(120,8)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+```{r}
+gam.check(GAM_M_final)
+```
+
+
+```{r}
+#summary(M_I_II)
+AIC(GAM_M_final,Model_GAM,GAM_MI,M_I_II,M_I_1)
+summary(GAM_M_final)
+#gam.check(M_I_II)
+```
+##Model adequecy checking 
+```{r}
+gam.check(GAM_M_final)
+```
+
+
+
+### Plot the final selected model using visualization plot of gam models
+```{r}
+
+```
+
+### Effect specific effects
+```{r}
+b <- getViz(GAM_M_final)
+```
+
+```{r}
+o <- plot( sm(b, 3) )
+o + l_fitLine(colour = "red") + l_rug(mapping = aes(x=x, y=y), alpha = 0.8) +
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + 
+    l_points(shape = 19, size = 1, alpha = 0.1) + theme_classic()
+
+```
+
+```{r}
+library(ggplot2)
+theme_set(theme_bw())
+library(dplyr)
+library(mgcv)
+library(tidymv)
+plot_smooths(model = GAM_M_final,series =Elevatn )
+```
+
+```{r}
+M_Dat$Fit<-GAM_M_final$fitted.values
+head(M_Dat)
+```
+
+```{r}
+ggplot()+geom_point(data=M_Dat, mapping=aes(x=Min_temp,y=TM),color="blue")+ geom_point(data=M_Dat, mapping=aes(x=Min_temp,y=Fit),color="red")
+```
+
+
+# Spatial effect: 2D smooth effect plots
+
+```{r}
+plot(sm(b, 4)) + l_fitRaster() + l_fitContour() + l_points(size=2,color="red")
+```
+## 
+```{r}
+gridPrint(plot(sm(b, 4)) + l_fitRaster() + l_fitContour() + labs(title = "Spatial effects") + guides(fill=FALSE))# plot(pterm(b, 1)) + l_ciPoly() + l_fitLine(), ncol = 1)
+
+```
+### The plot.gamViz method
+
+```{r}
+print(plot(b, allTerms = T), pages = 6)
+```
+#### One page for each map
+```{r}
+plot(b)+geom_hline(yintercept = 0, linetype = 2,color="blue")
+```
+
+```{r}
+pl <- plot(b, allTerms = T) + l_points() + l_fitLine(linetype = 3) + l_fitContour() + 
+      l_ciLine(colour = 2) + l_ciBar() + l_fitPoints(size = 1, col = 2) + theme_get() + labs(title = NULL)
+print(pl, pages = 6)
+```
+
+### 
+```{r}
+plot(b, select = 2) + l_dens(type = "cond") + l_fitLine() + l_ciLine()
+```
+
+```{r}
+plot(b, allTerms = TRUE, select = 6) + geom_hline(yintercept = 0,linetype=2,colour="blue")
+```
+
+# 2 Interactive rgl smooth effect plots for 2D and 3D methods
+
+```{r}
+aspect3d(1, 2, 1)
+plotRGL(sm(b, 16), fix = c("Month" = 12), residuals = TRUE)
+```
+
+
+## 3 Model checking
+1.2.1.1 The qq.gamViz methodConsider the following model with binomial responses:
+
+We can get a QQ-plot of the residuals as follows:
+
+
+```{r}
+qq(b, method = "simul1", a.qqpoi = list("shape" = 1), a.ablin = list("linetype" = 2))
+qq(b, rep = 20, showReps = T, CI = "none", a.qqpoi = list("shape" = 19), a.replin = list("alpha" = 0.2))
+```
+
+
+```{r}
+o1 <- qq(b, rep = 1000, method = "simul1", CI = "normal", showReps = TRUE, 
+        a.replin = list(alpha = 0.1), discrete = TRUE)
+o1 
+
+```
+```{r}
+o2 <- qq(b, rep = 1000, method = "simul1", CI = "normal", showReps = TRUE,
+        ngr = 1e2, a.replin = list(alpha = 0.1), a.qqpoi = list(shape = 19))
+o2 
+```
+```{r}
+gridPrint(o2, zoom(o2, xlim = c(2, 2.5), ylim = c(2, 2.5)), ncol = 2)
+```
+
+### shiny plot of the qq-GAM plot 
+```{r}
+library(shiny)
+shine(o2)
+```
+### 4. The check.gamViz method
+
+```{r}
+check(b,a.qq = list(method = "tnorm",a.cipoly = list(fill = "light blue")), 
+      a.respoi = list(size = 0.5), a.hist = list(bins = 10))
+```
+
+### Plotting multiple slices of multi-dimensional smooth effects
+
+
+```{r}
+pl <- plotSlice(x = sm(b, 15), 
+                fix = list("year" = seq(2012, 2020, length.out = 9)))
+pl + l_fitRaster() + l_fitContour() + l_points() + l_rug()
+
+```
+
+```{r}
+pl <- plotSlice(x = sm(b, 16), 
+                fix = list("Month" = seq(1, 12, length.out = 12)))
+pl + l_fitRaster() + l_fitContour() + l_points() + l_rug()
+
+```
+```{r}
+library(gratia)
+```
+
+
+
+```{r}
+draw(GAM_M_final,select = c(6,7,8,9))+geom_hline(yintercept = 0,linetype=2,colour="blue")
+```
+
+
+
+
+
+
+
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+GAM_M_final_2<-bam(TM~LLIN_ATLEASTONE+s(Month,k=10,bs='cc')+s(Time,k=60,bs='ps')+
+               s(year,k=6)+s(Longitude,Latitude,k=140,bs='ds',m=c(1,0.5))+s(Elevatn,k=30)+s(Soil_mois,k=18)+s(Landsurf_temp,k=24)+s(Rain_fall,k=30)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,5))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(120,50))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(135,7)), data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+
+
+
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+Model_GAM<-bam(TM~LLIN_ATLEASTONE+s(Month,k=6,bs='cc')+s(Time,k=30,bs='ps')+
+               s(year,k=6)+s(Longitude,Latitude,k=120,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,5))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(120,12))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(90,6))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),NA),k=c(20,8)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE)
+```
+
+
+
+### The final model is selected using comparisons of AIC and model with smaller AIC value considered for preparing the last paper.
+
+#### 1. The GAM_M_final model were considered and ploting is done using 
+```{r}
+layout(matrix(1:2,ncol=2))
+plot(GAM_M_final,scheme=2)
+layout(1)
+
+```
+
+```{r}
+library(gratia)
+plot.gam(GAM_M_final)
+```
+
+
+```{r dev = c("png", "jpg")}
+library(gratia)
+layout(matrix(1:2,ncol=1))
+draw(GAM_M_final,scales = "fixed",overall_uncertainty = TRUE)
+```
+```{r}
+gam.check(GAM_M_final,rep = 1000)
+```
+
+
+
+### Likelihood ratio-test for comparison of models 
+```{r}
+anova(GAM_M_final,Model_GAM,test = "F")
+```
+
+
+### Ploting the nonparametric effects of covariates on the model
+```{r}
+plot(GAM_M_final,pages=20, scheme=2, shade=TRUE,shade.col="lightblue")
+```
+
+
+### Ploting using plot.gam() function
+```{r}
+plot.gam(GAM_M_final,rug=FALSE,seWithMean = TRUE)
+```
+
+
+```{r}
+plot(M_I_VIII, select = c(2, 3))
+plot(M_I_VIII, pages = 1)
+plot(M_I_VIII, pages = 1, all.terms = TRUE)
+plot(M_I_VIII, rug = TRUE)
+plot(M_I_VIII, residuals = TRUE)
+plot(M_I_VIII, rug = TRUE, residuals = TRUE,pch = 1, cex = 1)
+plot(M_I_VIII, se = TRUE)
+plot(M_I_VIII, shade = TRUE)
+plot(M_I_VIII, shade = TRUE, shade.col = "lightblue")
+plot(M_I_VIII, seWithMean = TRUE)
+plot(M_I_VIII, scheme = 2)
+```
+
+
+
+
+```{r}
+vis.gam(x,
+        view = NULL,
+        cond = list(),
+        n.grid = 30,
+        too.far = 0,
+        col = NA,
+        color = "heat",
+        contour.col = NULL,
+        se = -1,
+        type = "link",
+        plot.type = "persp",
+        zlim = NULL,
+        nCol = 50,
+        ...)
+vis.gam(x = mod,                # GAM object
+        view = c("x1", "x2"),   # variables
+        plot.type = "persp")    # kind of plot
+
+vis.gam(x = mod,                # GAM object
+        view = c("x1", "x2"),   # variables
+        plot.type = "contour")  # kind of plot
+vis.gam(mod, view = c("x1", "x2"), plot.type = "contour", too.far = 0.1)
+vis.gam(mod, view = c("x1", "x2"), plot.type = "contour", too.far = 0.05)
+```
+
+
+```{r}
+vis.gam(x = mod, view = c("x1", "x2"), 
+        plot.type = "persp", se = 2)
+vis.gam(g, view = c("x1", "x2"), plot.type = "persp", theta = 220)
+vis.gam(g, view = c("x1", "x2"), plot.type = "persp", phi = 55)
+vis.gam(g, view = c("x1", "x2"), plot.type = "persp", r = 0.1)
+vis.gam(g, view = c("x1", "x2"), plot.type = "contour", color = "gray")
+vis.gam(g, view = c("x1", "x2"), plot.type = "contour", contour.col = "blue")
+vis.gam(g, view = c("x1", "x2"), plot.type = "contour", nlevels = 20)
+vis.gam(mod2d, view = c("x", "y"), plot.type = "contour")
+
+```
+
+#### Final Model 
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+Teshe<-bam(TM~s(LLIN_ATLEASTONE,k=4)+s(Month,k=6,bs='cc')+s(Time,k=30,bs='ps')+
+               s(year,k=6)+s(Longitude,Latitude,k=120,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,5))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(120,12))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),NA),k=c(90,6))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),NA),k=c(120,8)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+
+```{r}
+knot<-list(Month=c(0.5,12.5))
+Teshe2<-bam(TM~s(LLIN_ATLEASTONE,k=4)+s(Month,k=12,bs='cc')+s(Time,k=80,bs='ps')+
+               s(year,k=8)+s(Longitude,Latitude,k=150,bs='ds',m=c(1,0.5))+s(Elevatn,k=40)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,8))+ti(Longitude,Latitude,Time,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),2),k=c(150,80))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),2),k=c(140,6))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),2),k=c(150,12)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+```{r}
+set.seed(123456)
+knot<-list(Month=c(0.5,12.5))
+Teshe_3<-bam(TM~s(Month,k=12,bs='cc')+         s(year,k=8)+s(Longitude,Latitude,k=152,bs='ds',m=c(1,0.5))+s(Elevatn,k=40)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,8))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),2),k=c(150,8))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),2),k=c(150,12)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+
+
+```{r}
+set.seed(123456)
+knot<-list(Month=c(0.5,12.5))
+Teshe_4<-bam(TM~s(Month,k=12,bs='cc')+         s(year,k=8)+s(Longitude,Latitude,k=152,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,8))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),2),k=c(150,8))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),2),k=c(150,12)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+```{r}
+set.seed(123456)
+knot<-list(Month=c(0.5,12.5))
+Teshe_expected<-bam(TM~s(Month,k=12,bs='cc')+         s(year,k=8)+s(Longitude,Latitude,k=152,bs='ds',m=c(1,0.5))+s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+
+              s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30)+ti(Month,year,bs=c('cc','tp'),k=c(12,8))+ti(Longitude,Latitude,year,d=c(2,1),bs=c('ds','tp'),m=list(c(1,0.5),2),k=c(150,8))+ti(Longitude,Latitude,Month,d=c(2,1),bs=c('ds','cc'),m=list(c(1,0.5),2),k=c(150,12)),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Expected,knots = knot,nthreads=c(4,1),discrete=TRUE,select = TRUE)
+
+```
+
+
+
+```{r}
+summary(Teshe_4)
+```
+
+```{r,echo=T,tidy=F, include=T, message=FALSE, highlight=TRUE}
+layout(matrix(1:1,nrow=1))
+plot.gam(Teshe_4, scheme = 2)
+layout(1)
+print(Teshe_4$sp) 
+```
+
+```{r}
+predict_r = expand.grid(
+  Latitude= seq(min(M_Dat$Latitude), 
+                max(M_Dat$Latitude),
+                length=152),
+  Longitude = seq(min(M_Dat$Longitude),
+                  max(M_Dat$Longitude),
+                  length=152),
+  Month=seq(1,12,by=1),
+  year = seq(2012,2020,by=1)
+)
+
+predict_r = predict_r[with(predict_r,inSide(Amhara, Latitude,Longitude)),]
+predict_r$model_fit = predict(Teshe_4,predict_r,type = "response")
+ggplot(aes(Longitude, Latitude, fill= model_fit),
+       data=predict_r)+
+  geom_tile()+
+  facet_wrap(~Year,nrow=2)+
+  scale_fill_viridis("# of species")+
+  theme_bw(10)
+
+```
+
+
+
+
+```{r}
+M_Dat$res<-residuals(Teshe_4)
+ggplot(M_Dat,aes(Longitude,Latitude,colour=res))+geom_point(size=5)+scale_color_gradient2()
+```
+
+```{r}
+AA<-as.matrix(dist(cbind(M_Dat$Longitude,M_Dat$Latitude)))
+A1<-1/AA
+diag(A1)<-0
+A1[1:10,1:10]
+Moran.I(M_Dat$res,A1)
+```
+
+```{r}
+library(sf)
+library(sp)
+library(spData)
+library(spdep)
+library(rgdal)
+library(rgeos)
+#library(tmap)
+#library(tmaptools)
+#library(spgwr)
+library(grid)
+library(gridExtra)
+# Define weight matrix
+listw<-nb2list(neighbors2)
+Globalmoran<-moran.test(OA.Census$Qualification,listw)
+moran<-moran.plot()
+```
+
+
+
+
+
+
+```{r}
+plot(Teshe_4,pages=14,scheme=2, shade=TRUE)
+```
+
+```{r}
+gam.check(Teshe_4)
+```
+
+
+
+```{r}
+gam.check(Teshe_3)
+```
+
+
+```{r}
+summary(Teshe_3)
+```
+
+### Effect specific effects
+```{r}
+d <- getViz(Teshe_4)
+```
+
+
+
+### Effect specific effects
+```{r}
+c <- getViz(Teshe_3)
+```
+
+### The plot.gamViz method
+
+```{r}
+#tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 16.tif",units = "in",width = 5,height = 4,res = 300)
+print(plot(d, allTerms = T,colours="red"), pages = 8)
+dev.off()
+```
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 1.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 1))
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour="blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Months of a Year")
+dev.off()
+```
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 2.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 2) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1.5,1.5)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Year")
+dev.off()
+```
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 3.tif",units = "in",width = 5,height = 4,res = 300)
+plot(sm(d, 3)) + l_fitRaster() + l_fitContour() #+ l_points()
+dev.off()
+```
+
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 4.tiff",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 4) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-25,25)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Average elevation of districts")
+dev.off()
+```
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 5.tiff",units="in",width=5, height=4,res=300,compression="lzw")
+o <- plot( sm(d, 5) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Soil moisture ")
+dev.off()
+```
+
+
+
+```{r}
+#,figure-side,fig.show="hold",out.width="50%"}
+library(gtable)
+
+#tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 15.tiff",units="in",width=5, height=4,res=300,compression="lzw")
+#par(mar=c(4,4,0.1,0.1))
+p1<-plot( sm(d, 1))+ l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour="blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Months of a Year")
+
+p2<- plot( sm(d, 2) )+l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1.5,1.5)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Year")
+plot_grid(p1,p2)
+#dev.off()
+```
+
+
+
+
+```{r,figure-side,fig.show="hold",out.width="50%"}
+#tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 15.tiff",units="in",width=5, height=4,res=300,compression="lzw")
+ plot( sm(d, 4) )+ l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-25,25)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Average elevation of districts")
+ plot( sm(d, 5) ) + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Soil moisture ")
+```
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 6.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 6) )
+o + l_fitLine(colour = "red",linetype=1) + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Land surface temperature")
+dev.off()
+```
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 7.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 7) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Rainfall")
+dev.off()
+```
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 8.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 8) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1,1)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Minimum temperature")
+dev.off()
+```
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 9.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 9) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-1,1.5)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Maximum Temperature")
+dev.off()
+```
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 10.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 10) )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-0.75,0.75)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Normalized Difference Vegetation Index (NDVI)")
+```
+
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 11.tif",units = "in",width = 5,height = 4,res = 300)
+o <- plot( sm(d, 11),shade = TRUE, shade.col = "lightblue" )
+o + l_fitLine(colour = "red") + 
+    l_ciLine(mul = 5, colour = "blue", linetype = 2) + theme_classic()+ylim(-0.5,0.5)+geom_hline(yintercept = 0,linetype=2,colour="gray")+labs(y="Effects",x="Relative humidity")
+dev.off()
+
+```
+
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 12.tif",units = "in",width = 5,height = 4,res = 300)
+plot(sm(d, 12)) + l_fitRaster() + l_fitContour() #+ l_points()
+dev.off()
+```
+
+
+```{r}
+print(plot(c, allTerms = T), pages = 12)+geom_hline(yintercept = 0,linetype=2,colour="gray")
+
+```
+
+
+```{r}
+plot(sm(c, 3)) + l_fitRaster() + l_fitContour() #+ l_points()
+```
+
+# Plotting sequence of sclices of 2D smooths
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 13.tif",units = "in",width = 5,height = 4,res = 300)
+pl <- plotSlice(x = sm(d, 13),
+                fix = list("year" = seq(2012, 2020, length.out = 9)))
+pl + l_fitRaster(pTrans=function(.p)1) + l_fitContour() + l_points() + l_rug()
+dev.off()
+```
+
+```{r}
+plot(Teshe_3,pages=7,scheme=2, shade=TRUE)
+```
+
+
+
+```{r}
+tiff(filename = "D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Figures editable\\Figure 14.tiff",units = "in",width = 5,height = 4,res= 300)
+p2 <- plotSlice(x = sm(d, 14),
+                fix = list("Month" = seq(1, 12, length.out = 12)))
+p2 + l_fitRaster() + l_fitContour() + l_points() + l_rug()
+dev.off()
+```
+
+
+
+
+```{r}
+library(gratia)
+draw(Teshe_3,select = c(13))+geom_hline(yintercept = 0,linetype=3,colour="blue")+xlim(0,600)+ylim(-1,1)
+```
+
+
+
+```{r}
+draw(Teshe_3,select = c(8,9))+geom_hline(yintercept = 0,linetype=1,colour="blue")
+```
+
+
+
+```{r}
+draw(GAM_M_final,select = c(3,4))#geom_hline(yintercept = 0,linetype=2,colour="blue")
+```
+
+```{r}
+draw(GAM_M_final,select = c(1,2))#+geom_hline(yintercept = 0,linetype=2,colour="blue")
+```
+
+### Scatter plot 
+
+```{r}
+ggplot(M_Dat, aes(x=Rain_fall, y=TM)) + geom_point()+geom_smooth(method=lm, se=TRUE, fullrange=fals, level=0.95)
+```
+
+
+```{r}
+set.seed(123456)
+knot<-list(Month=c(0.5,12.5))
+Teshe_Environ<-bam(TM~s(Elevatn,k=20)+s(Soil_mois,k=18)+s(Landsurf_temp,k=20)+s(Rain_fall,k=24)+s(Min_temp,k=20)+ s(Max_temp,k=30)+s(NDVI,k=20)+s(Relative.humidity,k=30),data = M_Dat,family = nb(theta=3.26,link = "log"),method='fREML',offset = Pop,discrete=TRUE,select = TRUE)
+
+```
+
+```{r}
+summary(Teshe_Environ)
+```
+## Fitted Value
+
+```{r}
+M_Dat$res<-GAM_M_final$residuals
+```
+
+```{r}
+plot.gam(d,seWithMean = TRUE)
+```
+
+```{r}
+draw(Teshe_4,pages=12,scheme=2,scales='free',overall_uncertainty = TRUE)
+```
+
+
+
+```{r}
+M_Dat$res<-residuals(GAM_M_final)
+#ggplot(M_Dat,aes(Longitude,Latitude,colour=res))+geom_point(size=5)+scale_color_gradient2()
+#write.csv(M_Dat,file="D:/Teshe/S_T.csv")
+spat<-read.csv("D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\Res_spatial.csv")
+Temp<-read.csv("D:\\PHD Proposal\\proposal versions\\Article writing\\Paper IV\\T_residual.csv")
+```
+
+
+```{r}
+#library(ape)
+A<-as.matrix(dist(cbind(spat$Long,spat$Lat)))
+A.inv<-1/A
+diag(A.inv)<-0
+A.inv[1:5,1:5]
+moran.I(spat$Residdual,A.inv)
+```
+```{r}
+library(spDataLarge)
+library(spData)
+library(sp)
+library(PROJ)
+library(geos)
+library(sf)
+library(spacetime)
+library(spdep)
+Amhara<- st_read("D:/Administration/Amhara_woreda_recent_boundary.shp")
+AA<-merge(Amhara,spat,by="Woreda_Nam")
+```
+
+```{r}
+nb<-poly2nb(AA,queen = TRUE)
+lw<-nb2listw(nb,style = "W",zero.policy = TRUE)
+inc.lag<-lag.listw(lw,AA$Residdual)
+plot(inc.lag~AA$Residdual,pch=16,asp=1)
+m1<-lm(inc.lag~AA$Residdual)
+abline(m1,col="blue")
+
+I=moran(AA$Residdual,lw,length(nb),Szero(lw))[1]
+moran.test(AA$Residdual,lw,alternative = "greater")
+MC<-moran.mc(AA$Residdual,lw,nsim=9999, alternative = "two.sided")
+MC
+plot(MC)
+```
+### Prediction
+
+```{r, echo=T,tidy=F, include=T, message=FALSE,highlight=TRUE}
+#First we'll create gridded data
+predict_richess = expand.grid(
+  Latitude= seq(min(M_Dat$Latitude), 
+                max(M_Dat$Latitude),
+                length=50),
+  Longitude = seq(min(M_Dat$Longitude),
+                  max(M_Dat$Longitude),
+                  length=50),
+  year = seq(2012,2020,by=1)
+)
+# This now selects only that data that falls within Florida's border
+predict_richess = predict_richess[with(predict_richess, 
+                                       inSide(Amhara, Latitude,Longitude)),]
+predict_richess$model_fit = predict(Teshe_4,data=
+                                    predict_richess)#, type = "response")
+ggplot(aes(Longitude, Latitude, fill= model_fit),
+       data=predict_richess)+
+  geom_tile()+
+  facet_wrap(~year,nrow=2)+
+  scale_fill_viridis("# of species")+
+  theme_bw(10)
+```
+
+
+
+
+
+
+```{r, echo=T,tidy=F, include=T, message=FALSE,highlight=TRUE}
+
+predict_richess$model_change =predict(richness_ti_model,
+                                      predict_richess%>%mutate(Year=Year+1),
+                                      type = "response") -
+  predict_richess$model_fit 
+ggplot(aes(Longitude, Latitude, fill= model_change),
+       data=predict_richess)+
+  geom_tile()+
+  facet_wrap(~Year,nrow=2)+
+  scale_fill_gradient2("Rate of change\n(species per year)")+
+  theme_bw(10)
+```
+
+### Distributed lag models
+
+
+```{r}
+lagard <- function(x,n.lag=3) {
+n <- length(x); X <- matrix(NA,n,n.lag)
+for (i in 1:n.lag) X[i:n,i] <- x[i:n-i+1]
+X
+}
+Dat <- list(lag=matrix(0:2,nrow(M_Dat),3,byrow=TRUE))
+Dat$Rain_fall <- lagard(M_Dat$Rain_fall)
+Dat$Min_temp<-lagard(M_Dat$Min_temp)
+Dat$Max_temp<-lagard(M_Dat$Max_temp)
+Dat$Relative.humidity<-lagard(M_Dat$Relative.humidity)
+Dat$NDVI<-lagard(M_Dat$NDVI)
+Dat$Soil_mois<-lagard(M_Dat$Soil_mois)
+Dat$Landsurf_temp<-lagard(M_Dat$Landsurf_temp)
+Dat$FID<-M_Dat$FID
+Dat$Month<-M_Dat$Month
+Dat$year<-M_Dat$year
+Dat$Woreda_Nam<-M_Dat$Woreda_Nam
+Dat$Time<-M_Dat$Time
+Dat$malaria_cases<-M_Dat$TM
+Dat$mon_yr<-M_Dat$mon_yr
+head(Dat)
+```
+
+
+```{r}
+lag=3
+apl <- bam(malaria_cases~s(Month,bs="cr",k=4)+te(Rain_fall,lag,k=c(100,2))+
+te(Min_temp,lag,k=c(100,2)),family=poisson,data=Dat)
+```
+
+```{r}
+
+knots<-list(Month=c(0.5,12.5))
+M_eff_2<-bam(TM~s(Month,k=8,bs="cc")+s(year,k=4,bs="tp")+s(Longitude,Latitude, k=100,bs="ds",m=c(1,0.5))+
+             s(Elevatn,k=15)+s(Soil_mois,k=14,bs="tp")+s(Soil_mois_1,k=24,bs="tp")+s(Soil_mois_2,k=26,bs="tp")+s(Landsurf_temp,k=20)+
+             s(Landsurf_temp_1,k=20)+s(Landsurf_temp_2,k=16)+s(Rain_fall,k=20)+s(Rain_fall_1,k=26)+s(Rain_fall_2,k=36)+
+             s(Min_temp,k=12)+ s(Min_temp_1,k=12)+ s(Min_temp_2,k=12)+s(Max_temp,k=25)+s(Max_temp_1,k=20)+s(Max_temp_2,k=25)+s(NDVI,k=18)+
+             s(NDVI_1,k=18)+s(NDVI_2,k=20)+s(Relative.humidity,k=16)+s(Relative.humidity_1,k=20)+s(Relative.humidity_2,k=20),
+           model=poisson,data = M_Dat,method = "fREML",knots = knots)
+
+```
+
+
+```{r}
+qq.gam(Teshe_4, rep=500, level=.9,type=c("deviance","pearson","response"))
+```
+
+```{r}
+qq(d, rep = 1000, level = .9, CI = "quantile",type="deviance")
+```
+
+
+### Scaled resiadual
+
+```{r}
+library(DHARMa)
+testDispersion(Teshe_4)
+```
+
+
+```{r}
+sim1 <- simulateResiduals(fittedModel = d, plot = F)
+#residuals(sim)
+```
+
+```{r}
+plot(sim1)
+```
+
+```{r}
+testUniformity(sim1,alternative = "two.sided",plot = TRUE)
+```
+
+```{r}
+testDispersion(sim1,plot=T)
+```
+
+
+```{r}
+testZeroInflation(sim1)
+#testTemporalAutocorrelation(sim,Time,alternative = "two.sided",plot = T)
+#testTemporalAutocorrelation(simulationOutput = sim,time = Time)
+
+```
+
+Over dispersion 
+
+```{r}
+library("countreg")
+library("ggplot2")
+
+#root_pois <- rootogram(, style = "hanging", plot = FALSE)
+autoplot(root_pois)
+root_nb   <- rootogram(Teshe_4, style = "hanging", plot = FALSE)
+autoplot(root_nb)
+```
+
+# ou can also compute the Pearson estimate for the dispersion parameter using the Pearson residuals of each model:
+```{r}
+sum(residuals(Teshe_4, type = "pearson")^2) / df.residual(Teshe_4)
+```
+```{r}
+library('brms')
+
+
+## fit a model with constant zero inflation
+fit_zinb1 <- brm(count ~ s(persons, k = 4) + s(child, k = 4) + camper, 
+                 data = zinb, family = zero_inflated_negbinomial(),
+                 chains = 4, cores = 4,
+                 control = list(adapt_delta = 0.999))
+## plot the marginal effects
+plot(marginal_effects(fit_zinb1))
+## model summary
+summary(fit_zinb1, WAIC = FALSE)
+
+## fit a model where the zero-inflation is a constant plus a linear
+##   effect of number of children
+fit_zinb2 <- brm(bf(count ~ s(persons, k = 4) + s(child, k= 4) + camper,
+                    zi ~ s(child, k = 4)), 
+                 data = zinb, family = zero_inflated_negbinomial(),
+                 chains = 4, cores = 4,
+                 control = list(adapt_delta = 0.999))
+## plot the marginal effects
+plot(marginal_effects(fit_zinb2))
+## model summary
+summary(fit_zinb2, WAIC = FALSE) 
+```
+
