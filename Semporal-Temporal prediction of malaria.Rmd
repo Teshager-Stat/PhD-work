@@ -1,0 +1,629 @@
+---
+title: "Eyu 29 2014"
+author: "Teshager"
+date: "5/7/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+### Libraries
+```{r}
+library(Rcpp)
+library(ggplot2)
+library(GGally)
+library(bmstdr)
+library(foreach)
+library(usethis)
+library(Matrix)
+library(parallel)
+library(sp)
+library(spdep)
+library(sf)
+library(spData)
+#library(spDataLarge)
+library(INLA)
+library(CARBayes)
+library(CARBayesST)
+library(shapefiles)
+library(ggplot2)
+library(truncdist)
+library(rstan)
+library(dplyr)
+library(tidyverse)
+library(rgdal)
+library(dplyr)
+library(inlabru)
+library(MASS)
+```
+
+
+
+### Import data
+```{r}
+Dat <- read.csv("C:\\Users\\DTU\\Desktop\\Machine Learning data and code 2\\Monthly malaria cases ST sorted NA estimated.csv")
+Dat$FID<-Dat$FID +1
+Dat$logEcases<- log(Dat$Population)
+#Dat$T_cos<-cos((3.14*Dat$Month_new)/6)
+#Dat$T_sin<-sin((3.14*Dat$Month_new)/6)
+Dat$T_cos<-cos((3.14*Dat$Time)/6)
+Dat$T_sin<-sin((3.14*Dat$Time)/6)
+M_shap<-read_sf("D:/Administration/Amhara_woreda_recent_boundary.shp")
+M_shap$FID<-M_shap$FID1
+Dat$Malrate<-(Dat$TM/Dat$Population)*1000
+Dat$Mal_disc<-ceiling(Dat$Malrate) 
+Dat$Mal_incid <- Dat$TM/Dat$Population
+Dat$mon_year<-as.Date(Dat$mon_yr,"%m/%d/%Y")
+head(Dat)
+```
+
+
+## Data preProcessing ... standadizing variables
+
+```{r}
+DD<-Dat
+DD<-DD %>% mutate_at(c('Elevatn', 'Soil_mois','Landsurf_temp','Rain_fall','Min_temp', 'Max_temp', 'NDVI','Relative.humidity','LLIN_ATLEASTONE','Soil_mois_1','Soil_mois_2','Landsurf_temp_1','Landsurf_temp_2','Rain_fall_1','Rain_fall_2','Min_temp_1','Min_temp_2','Max_temp_1', 'Max_temp_2','NDVI_1','NDVI_2','Relative.humidity_1', 'Relative.humidity_2'),~(scale(.) %>% as.vector))
+Dat_2<-DD
+head(Dat_2)
+```
+
+
+
+
+```{r}
+ptime <- ggplot(data=Dat_2,  aes(x=factor(Time), y=Malrate)) +
+  geom_boxplot() +
+  labs(x = "Month", y = "Number of cases per 100,000")  +
+  stat_summary(fun=median, geom="line", aes(group=1, col="red")) +
+  theme(legend.position = "none")
+ptime
+```
+
+
+
+
+
+# Spatio-temporal models 
+
+```{r}
+F2 <- Malrate ~ T_sin+T_cos+Elevatn+Max_temp+Min_temp+Rain_fall+Landsurf_temp+Relative.humidity+Soil_mois+NDVI+LLIN_ATLEASTONE
+
+```
+
+```{r}
+F22 <- Malrate ~ year + T_sin+T_cos+ Elevatn + Max_temp + Min_temp + Rain_fall + Landsurf_temp + Relative.humidity + Soil_mois + NDVI + LLIN_ATLEASTONE
+
+Mod_ST_4 <- Malrate~ year+Month_new+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn + Relative.humidity + Soil_mois_1+ Landsurf_temp_1 + Min_temp_1 + Max_temp_1+Relative.humidity_1+NDVI_1+Rain_fall_1
+
+Mod_ST_41 <- Malrate~ T_cos+T_sin+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn + Relative.humidity+ Soil_mois_1 + Landsurf_temp_1 + Min_temp_1 + Max_temp_1 + Relative.humidity_1+NDVI_1+Rain_fall_1+Rain_fall_2+ Min_temp_2 + Max_temp_2 + NDVI_2 + Relative.humidity_2 + Soil_mois_2 + Landsurf_temp_2
+```
+
+
+### Data partition 
+
+```{r}
+set.seed(1234)
+tn <- 96
+sn <- 152
+#blcok cross validation 
+valids<- c(1:30)
+#valids <- sample(1:sn,size=16)
+#validt <- sort(sample(1:tn, size=30))
+vrows <- getvalidrows(sn=sn, tn=tn, valids=valids, allt=TRUE)
+
+valids2<- c(1:152)
+#validt <- sort(sample(78:tn, size=19))
+validt <- sort(sample(69:tn, size=28))
+vrs <- getvalidrows(sn=sn, tn=tn, valids=valids2,validt = validt)
+```
+
+
+#### Modeling spatiotemporal data 
+# a. Point refernced data
+# 1. Spatio-temporal model fitting with the spTimer package
+
+##ST prediction using spTimer
+
+### M1: Linear 
+
+```{r}
+M1<-Bsptime(model = "lm",formula = Mod_ST, data=Dat_2,scale.transform = "SQRT", validrows = vrows, N=5000)
+summary(M1)
+M2<-Bsptime(model = "lm",formula = Mod_ST, data=Dat_2,scale.transform = "NONE", validrows = vrows, N=5000)
+summary(M2)
+```
+```{r}
+M1_1<-Bsptime(model = "lm",formula =F22, data=Dat_t,scale.transform = "SQRT", validrows = vrs, N=5000)
+summary(M1_1)
+```
+
+```{r}
+M11<-Bsptime(model = "lm",formula = F2, data=Dat_t,scale.transform = "SQRT", validrows = vrows, N=5000)
+summary(M11)
+M11_1<-Bsptime(model = "lm",formula =F22, data=Dat_t,scale.transform = "SQRT", validrows = vrows, N=5000)
+summary(M11_1)
+```
+
+
+
+
+
+```{r}
+#M1<-Bsptime(model = "lm",formula = F2, data=Dat,scale.transform = "SQRT", validrows = vrows, N=5000)
+#summary(M1)
+M1_1_22<-Bsptime(model = "lm",formula =Mod_ST_41, data=Dat,scale.transform = "SQRT", validrows = vrows_1, N=5000)
+summary(M1_1_22)
+```
+
+
+## M2: Separable model
+```{r}
+#M2<-Bsptime(model="separable", formula=F2, data=Dat,scale.transform = "SQRT",coordtype = "lonlat",coords = 26:27, validrows = vrows, N=5000 )
+#summary(M2)
+
+M2_1<-Bsptime(model="separable", formula=Mod_ST, data=Dat,scale.transform = "NONE",coordtype = "lonlat",coords = 26:27, validrows = vrows, N=5000 )
+summary(M2_1)
+```
+
+
+
+
+### M3: Independent GP model with nugget efffect: Temporally independent GP for the spatiotemporal process w(si,t)
+# using a spTimer package with a Matern correlation function 
+
+```{r}
+DFit<-Dat_2[1:11704,]
+Dfore<-Dat_2[11705:14592,]
+library(spTimer)
+M3_1 <- Bsptime(package="spTimer", formula=F2, data=DFit,coordtype="utm", coords=26:27, scale.transform = "SQRT", N=5000)
+#M3_2 <- Bsptime(package="spTimer", formula=F22, data=DFit,coordtype="utm", coords=26:27, scale.transform = "SQRT", N=5000)
+nfore <- predict(M3_1$fit,newdata=Dfore, newcoords= ~Lngtd_X + Lattd_Y, type="temporal", foreStep=19, tol=0.05)
+```
+
+### M4: Marginal model implementaion using stan for independent GP model
+
+
+```{r}
+library(rstan)
+M4_1<- Bsptime(package = "stan",model = "GP", formula=Mod_ST_4, data=Dat, scale.transform = "NONE",
+            coordtype = "lonlat",coords = 26:27, validrows=vrows_1, N=10,burn.in =2,mchoice=T,verbose=F)
+summary(M4_1)
+```
+
+
+
+
+
+## M5: Autoregressive model (hierarchical AR models usng spTimer package, RA(1))
+
+
+```{r}
+#M5_1<-Bsptime(package = "spTimer",model = "AR", formula=F2, data=Dat, scale.transform = "NONE",
+ #           coordtype = "lonlat",coords = 26:27, validrows=vrows, N=5000 )
+M5<-Bsptime(package = "spTimer",model = "AR", formula=Mod_ST_4, data=Dat, scale.transform = "SQRT",
+            coordtype = "lonlat",coords = 26:27, validrows=vrows, N=5000 )
+summary(M5)
+```
+
+
+
+
+
+##M6. AR model using InLa
+
+```{r}
+
+```
+
+
+
+
+### M7. Spatiotemporal dynamic models
+
+```{r}
+library(spTDyn)
+F3 <- TM ~ Elevatn+Max_temp+tp(Min_temp)+Rain_fall+sp(Rain_fall)+Landsurf_temp+Relative.humidity+sp(Relative.humidity)+Soil_mois+NDVI+LLIN_ATLEASTONE
+M7<-Bsptime(package = "sptDyn",model ="GP",formula = F3, data=Dat, coordtype = "lonlat",coords = 26:27,scale.transform = "NONE",validrows = vrows,N=5000)
+summary(M7)
+```
+
+
+### M8. All paraMETERS ARE SPATIALLY VARYING , 7.5.2 dynamic ST model and regression coefficients allowed to have a dynamic prior distributions
+
+
+```{r}
+M8<-Bsptime(package = "spBayes",formula=F2, data=Dat, scale.transform = "NONE",prior.sigma2 = c(2,25),prior.tau2 = c(2,25),prior.sigma.eta = c(2,0.01),mchoice = TRUE,
+            coordtype = "lonlat",coords = 26:27, validrows=vrows, N=5000 )
+summary(M8)
+```
+
+
+### M9. ST models based on Gaussian predictive process (GPP)
+
+```{r}
+M9 <- Bsptime(package = "spTimer", model="GPP", g_size=12, formula = F2, data=Dat,coordtype = "lonlat",coords = 26:27,validrows =vrows, scale.transform = "NONE")
+summary(M9)
+
+#M9_1 <- Bsptime(package = "spTimer", model="GPP", g_size=5, formula = F2, data=D_U500,coordtype = "lonlat",coords = 26:27,validrows =vrows, scale.transform = "NONE")
+#summary(M9_1)
+```
+
+
+
+
+
+# Spatiotemporal Areal data 
+
+### Creating spatial contiguity matrix
+
+
+
+```{r}
+W_queen <- poly2nb(pl=M_shap, queen = TRUE)
+W_Rook <- poly2nb(pl=M_shap, queen = FALSE)
+WEIT=nb2listw(neighbours=W_Rook,style="W")
+WM <- nb2mat(neighbours=WEIT$neighbours,style="B", zero.policy = TRUE)
+```
+
+
+```{r}
+library(spData)
+library(spdep)
+temp<-poly2nb(M_shap)
+nb2INLA("Amhara.graph",temp)
+Amhara_shape<-paste(getwd(),"/Amhara.graph",sep = "")
+Amhara_shape
+```
+
+
+
+
+# Spatio-temporal models 
+
+```{r}
+F_disc <- Mal_disc ~ T_sin+T_cos+year+Elevatn+Max_temp+Min_temp+Rain_fall+Landsurf_temp+Relative.humidity+Soil_mois+NDVI+LLIN_ATLEASTONE
+```
+
+## Modeling statistic areal level data  # poisson model
+```{r}
+ptime <- ggplot(data=Dat,  aes(x=factor(Time), y=Malrate)) +
+  geom_boxplot() +
+  labs(x = "Month", y = "Number of cases per 100,000")  +
+  stat_summary(fun=median, geom="line", aes(group=1, col="red")) +
+  theme(legend.position = "none")
+ptime
+```
+
+
+
+
+
+
+
+### Running the spatiotemporal data 
+
+```{r}
+Mod_ST <- Mal_disc~ T_sin +T_cos+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn +Relative.humidity 
+```
+
+
+```{r}
+Mod_ST_1 <- Malrate~ year+Month_new+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn +Relative.humidity+Soil_mois_1+Landsurf_temp_1+Min_temp_1+Max_temp_1+Relative.humidity_1+NDVI_1+Rain_fall_1
+Mod_ST_2 <- Malrate~ T_cos+T_sin+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn +Relative.humidity+Soil_mois_1+Landsurf_temp_1+Min_temp_1+Max_temp_1+Relative.humidity_1+NDVI_1+Rain_fall_1
+```
+
+
+```{r}
+set.seed(12345)
+vs <- sample(nrow(Dat), 0.2*nrow(Dat))
+```
+
+
+
+
+
+
+
+
+## 1. ST_linear model
+
+```{r}
+ST_linear <- Bcartime(formula=F2, data=Dat_2, scol="FID", tcol= "Time",  
+                      W=WM, model="linear", family="gaussian", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, 
+                       validrows=vrs, verbose=F)
+summary(ST_linear)
+```
+
+
+```{r}
+ST_linear <- Bcartime(formula=F_disc, data=Dat_2, scol="FID", tcol= "Time",  
+              W=WM, model="linear", family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, validrows = vrs,
+                        verbose=F)
+summary(ST_linear)
+```
+
+```{r}
+ST_linear_poi<- Bcartime(formula=F_disc, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="linear", family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, validrows=vrs,
+                       verbose=F,link = "log")
+summary(ST_linear_poi)
+```
+
+
+
+
+
+## 2.ST_Autoregressive models 
+  
+### 2.1 AR=1 model for temporal effects
+
+```{r}
+set.seed(12345)
+
+M2_AR1_1 <- Bcartime(formula=Mod_ST, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="ar", AR=1, family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, rseed = 12345, validrows=vrs)
+summary(M2_AR1_1)
+```
+,
+                      
+### 2.2 ST_AR2
+
+```{r}
+set.seed(5)
+
+ST_AR2_val <- Bcartime(formula=Mod_ST, data=Dat, scol="FID", tcol= "Time",  
+                       W=WM, model="ar", AR=2, family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, rseed = 12345,validrows=vrs)
+summary(ST_AR2_val)
+```
+
+
+### 2.3 ST_Poisson_AR1
+```{r}
+ST_PAR1 <- Bcartime(formula=Mod_ST, data=Dat, scol="FID", tcol= "Time",  
+                       W=WM, model="ar", AR=1, family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, 
+                       validrows=vrs, verbose=F,rseed = 12345)
+summary(ST_PAR1)
+```
+
+### 2.3.1 ST_ZIP_AR1
+```{r}
+ST_AR_ZIP <- Bcartime(formula=Mod_ST, data=Dat, scol="FID", tcol= "Time",  
+                       W=WM, model="ar", AR=1, family="zip", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, 
+                       validrows=vrs, verbose=F,rseed = 12345)
+summary(ST_AR_ZIP)
+
+```
+
+### 2.4 ST_Poisson_AR2
+```{r}
+ST_PAR2 <- Bcartime(formula=Mod_ST, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="ar",AR=2, family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, rseed=12345,
+                       validrows=vrs)
+summary(ST_PAR2)
+```
+
+
+
+
+
+# 3. ST_ANOVA gaussian
+
+```{r}
+ST_ANOVA <- Bcartime(formula=F2, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="anova", family="gaussian", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, interaction = FALSE,
+                       validrows=vrs, verbose=F)
+summary(ST_ANOVA)
+```
+
+
+### 3.1 ST_ANOVA -poisson without interaction
+ 
+```{r}
+ST_anova_2<- Bcartime(formula=Mod_ST, data=Dat, scol="FID", tcol= "Time",  
+                       W=WM, model="anova", family="poisson", package="CARBayesST", validrows=vrs,
+                       N=100000, burn.in=80000, thin=10, interaction = FALSE,link = "log")
+summary(ST_anova_2)
+```
+
+
+### 3.3 ST_ANOVA with interaction gaussian
+```{r}
+ST_ANOVA_33 <- Bcartime(formula=F2, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="anova", family="gaussian", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10, interaction = TRUE,
+                       validrows=vrs, verbose=F)
+summary(ST_ANOVA_33)
+```
+
+
+### 3.4 ST_ANOVA -poisson with interaction of time and space
+ 
+```{r}
+ST_anova_34<- Bcartime(formula=Mod_ST, data=Dat, scol="FID", tcol= "Time",  
+                       W=WM, model="anova", family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10,validrows=vrs, interaction = TRUE,link = "log")
+summary(ST_anova_34)
+```
+
+
+
+# 4. ST_sepspatial
+
+### 4.1 ST_separable model-gaussian
+
+```{r}
+ST_sep <- Bcartime(formula=F2, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="sepspatial", family="gaussian", package="CARBayesST", 
+                      validrows=vrows, N=100000, burn.in=80000, thin=10)
+summary(ST_sep)
+```
+
+
+### 4.2 ST_sepspatial_poisson
+
+```{r}
+ST_sep_2 <- Bcartime(formula=Mod_ST, data=DFit, scol="FID", tcol= "Time",  
+                       W=WM, model="sepspatial", family="poisson", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10,link = "log")
+summary(ST_sep_2)
+```
+
+
+
+
+
+
+
+
+
+
+## INLA ##
+
+```{r}
+m_1<-c("bym","rw1")
+m_2<-c("bym","iid")
+```
+
+
+### II. INLA poisson
+
+```{r}
+M_INLA_val <- Bcartime( formula=Mod_ST, data=Dat_2,adj.graph = Amhara_shape, scol ="FID", tcol="Time",model=c("bym","rw2"), family="zeroinflatedpoisson0", package="inla", N=1000, burn.in=400, thin = 10,link = "log",validrows = vrows) 
+```
+```{r}
+summary(M_INLA_val)
+```
+
+
+### Poisson
+
+```{r}
+Poin_INLA <- Bcartime( formula=Mod_ST, data=Dat_2,adj.graph = Amhara_shape, scol ="FID", tcol="Time",model=m_1, family="poisson", package="inla", N=1000, burn.in=400, thin = 10,link = "log",validrows = vrs) 
+```
+
+```{r}
+summary(Poin_INLA)
+```
+
+
+### Zero-inflated poisson
+
+```{r}
+model=c("bym","ar1")
+ZIP_INLA<- Bcartime( formula=Mod_ST, data=Dat_2,adj.graph=Amhara_shape, scol ="FID", tcol="Time",  
+                         model=model, family="zeroinflatedpoisson0", package="inla", link="log",validrows=vrs) 
+```
+
+
+
+
+```{r}
+summary(ZIP_INLA)
+```
+
+### negative binomial
+
+
+```{r}
+NB_INLA<- Bcartime( formula=Mod_ST, data=Dat_2,W=WM, scol ="FID", tcol="Time",  
+                        offsetcol=NULL,  model=m_1, family="nbinomial", package="inla", link="log",  N=1000, burn.in=400, thin = 10,validrows=vrs) 
+```
+```{r}
+summary(NB_INLA)
+```
+
+
+
+```{r}
+Gpoisson_INLA<- Bcartime( data=Dat_2,formula=Mod_ST,W=WM, scol ="FID", tcol="Time",  
+                        offsetcol=NULL, model=c("bym","ar1"),link="log", family="gpoisson", package="inla",N=1000, burn.in=400, thin = 10,validrows=vrs) 
+```
+
+
+```{r}
+summary(Gpoisson_INLA)
+```
+
+### ZIP using "zip" function in inla
+
+```{r}
+ZIN_INLA<- Bcartime( data=Dat_2,formula=Mod_ST,W=WM, scol ="FID", tcol="Time",  
+                        offsetcol=NULL, model=c("bym","ar1"),link="log", family="zeroinflatednbinomial0", package="inla",N=1000, burn.in=400, thin = 10,validrows=vrs) 
+```
+
+```{r}
+summary(ZIN_INLA)
+```
+
+
+
+
+
+########## Trying INLA using a new data set
+
+### Importing the data
+
+```{r}
+
+Dat_2 <- read.csv("C:\\Users\\DTU\\Desktop\\Machine Learning data and code 2\\Dat_2.csv")
+
+F2 <- Malrate ~ T_sin+T_cos+Elevatn+Max_temp+Min_temp+Rain_fall+Landsurf_temp+Relative.humidity+Soil_mois+NDVI+LLIN_ATLEASTONE
+Mod_ST <- Mal_disc~ T_sin +T_cos+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn +Relative.humidity 
+
+
+Mod_ST_inc <- Mal_incid~ T_sin +T_cos+ Max_temp + Min_temp + Soil_mois + NDVI + LLIN_ATLEASTONE + Rain_fall + Landsurf_temp + Elevatn +Relative.humidity 
+
+tn=96
+sn=152
+valids=c(1:152)
+validt <- sort(sample(78:tn, size=19))
+vs_1<- getvalidrows(sn=sn,tn=tn,valids=valids, validt=validt)
+dfit <- Dat_2[-vs_1, ]
+dfore <- Dat_2[vs_1, ]
+
+
+DFit<-Dat_2[1:11704,]
+Dfore<-Dat_2[11705:14592,]
+```
+
+
+
+```{r}
+library(spTimer)
+M3_1 <- Bsptime(package="spTimer", formula=F2, data=DFit,coordtype="utm", coords=26:27, scale.transform = "SQRT", N=5000)
+#M3_2 <- Bsptime(package="spTimer", formula=F22, data=DFit,coordtype="utm", coords=26:27, scale.transform = "SQRT", N=5000)
+nfore <- predict(M3_1$fit,newdata=Dfore, newcoords= ~Lngtd_X + Lattd_Y, type="temporal", foreStep=19, tol=0.05)
+```
+
+
+
+```{r}
+M_INLA_II<- Bcartime( formula=Mod_ST, data=Dat_2,W=WM, scol ="FID", tcol="Time",  
+                        offsetcol=NULL,  model=c("bym","ar1"), family="nbinomial", package="inla", link="log",validrows=vrs,  N=1000, burn.in=400, thin = 10,rseed = 12345) 
+
+```
+
+
+
+```{r}
+ST_sep_22 <- Bcartime(formula=Mod_ST_inc, data=Dat_2, scol="FID", tcol= "Time",  
+                       W=WM, model="ar",AR=1, family="gaussian", package="CARBayesST", 
+                       N=100000, burn.in=80000, thin=10,
+                        verbose=F)
+```
+
+Dat_2$L_expect2<-Dat_2$Expected/1000
+Dat_2$L_expect3<-ceiling(Dat_2$L_expect2)
